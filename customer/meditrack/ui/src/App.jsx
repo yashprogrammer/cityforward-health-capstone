@@ -341,6 +341,62 @@ function Audit() {
   return <fieldset><legend>Audit Trail (last 50)</legend><Grid rows={data?.map((r) => ({ ...r, TS: fd(r.TS) }))} cols={[['TS', 'Time'], ['USR', 'User'], ['ACTN', 'Action'], ['REF', 'Ref']]} /></fieldset>
 }
 
+// ------------------------------------------------------------------ Webhooks admin
+function Webhooks() {
+  const [subs, , reload] = useLoad(() => api('/int/admin/webhooks'), [])
+  const [out, , reloadOut] = useLoad(() => api('/int/admin/webhooks/outbox'), [])
+  const [f, setF] = useState({ name: '', url: '', secret: '', events: '*' })
+  const add = async () => { await post('/int/admin/webhooks', f); setF({ name: '', url: '', secret: '', events: '*' }); reload() }
+  const replay = async (id) => { await post(`/int/admin/webhooks/outbox/${id}/replay`); reloadOut() }
+  return (
+    <>
+      <fieldset>
+        <legend>System Admin - Event Webhooks</legend>
+        <p className="hint">MediTrack posts a signed CloudEvent (IDs only, no patient data) to every active subscription. Events: encounter.discharge-advised, encounter.discharged, document.added.</p>
+        <Grid rows={subs?.map((s) => ({ ...s, IS_ACTV: s.IS_ACTV ? 'Y' : 'N' }))} cols={[['WH_NM', 'Name'], ['WH_URL', 'URL'], ['EVENTS', 'Events'], ['IS_ACTV', 'Active'], ['SENT', 'Sent'], ['PENDING', 'Pending'], ['FAILED', 'Failed']]} />
+        <fieldset style={{ marginTop: 8 }}>
+          <legend>Add Subscription</legend>
+          <div className="formrow">
+            Name: <input type="text" size={16} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+            URL: <input type="text" size={38} value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} />
+            Secret: <input type="text" size={16} value={f.secret} onChange={(e) => setF({ ...f, secret: e.target.value })} />
+            Events: <input type="text" size={20} value={f.events} onChange={(e) => setF({ ...f, events: e.target.value })} />
+            <button className="primary" disabled={!f.name || !f.url || !f.secret} onClick={add}>Add</button>
+          </div>
+        </fieldset>
+      </fieldset>
+      <fieldset>
+        <legend>Delivery Log (last 100)</legend>
+        <table className="grid compact">
+          <thead><tr><th>ID</th><th>Event</th><th>Status</th><th>Attempts</th><th>Last error</th><th>Created</th><th></th></tr></thead>
+          <tbody>
+            {out?.map((o) => (
+              <tr key={o.ID}><td>{o.ID}</td><td>{o.EVT_TYP.replace('org.cityforward.meditrack.', '')}</td><td className={o.STS === 'FAILED' ? 'err' : ''}>{o.STS}</td>
+                <td>{o.ATTEMPTS}</td><td className="wrap">{o.LAST_ERR}</td><td>{fd(o.CRT_DT)}</td>
+                <td>{(o.STS === 'FAILED' || o.STS === 'SENT') && <button onClick={() => replay(o.ID)}>Replay</button>}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </fieldset>
+    </>
+  )
+}
+
+// Demo only: MediTrack has no SSO, so the banner lets you choose who you are signed in as (stored in a cookie).
+function ActAs() {
+  const [users] = useLoad(() => api('/int/users'), [])
+  const cur = (document.cookie.match(/(?:^|; )mt_user=([^;]*)/) || [])[1] || 'res.etran'
+  const change = (e) => { document.cookie = `mt_user=${e.target.value}; path=/`; window.location.reload() }
+  return (
+    <span className="user">
+      <select value={cur} onChange={change} title="Demo: act as" style={{ fontSize: 12, padding: '2px 4px' }}>
+        {(users || [{ USR_ID: cur, USR_NM: cur }]).map((u) => <option key={u.USR_ID} value={u.USR_ID}>{u.USR_NM} ({u.ROLE_CD}{u.UNIT_CD !== 'ALL' ? ', ' + u.UNIT_CD : ''})</option>)}
+      </select>
+      {' '}&middot; {new Date().toLocaleDateString('en-US')}
+    </span>
+  )
+}
+
 // ------------------------------------------------------------------ Shell
 export default function App() {
   const hash = useHash()
@@ -348,13 +404,13 @@ export default function App() {
   const nav = [
     ['In-Patient (IPD)', [['#/census', 'IPD Census'], ['#/discharged', 'Discharged Patients']]],
     ['Reports', [['#/mis', 'MIS: Discharge TAT']]],
-    ['System Admin', [['#/admin/links', 'External Links'], ['#/audit', 'Audit Trail']]],
+    ['System Admin', [['#/admin/links', 'External Links'], ['#/admin/webhooks', 'Event Webhooks'], ['#/audit', 'Audit Trail']]],
   ]
   return (
     <>
       <div className="banner">
         <span className="logo">MediTrack HMS<small>v3.4.0 &middot; CityForward Health, Columbus OH</small></span>
-        <span className="user">res.etran &middot; Unit: ALL &middot; {new Date().toLocaleDateString('en-US')} &middot; <a href="#/census">Logout</a></span>
+        <ActAs />
       </div>
       <div className="ticker">&#9888; Scheduled server maintenance: Sunday 02:00-04:00 AM. Please save your work. &middot; Lab results interface (HL7) delayed by 15 min on weekends. &middot; Contact IT ext. 2204 for password reset.</div>
       <div className="layout">
@@ -370,6 +426,7 @@ export default function App() {
           {ipMatch ? <Patient ip={ipMatch[1]} key={ipMatch[1]} />
             : hash === '#/discharged' ? <Discharged />
             : hash === '#/admin/links' ? <ExtLinks />
+            : hash === '#/admin/webhooks' ? <Webhooks />
             : hash === '#/mis' ? <Mis />
             : hash === '#/audit' ? <Audit />
             : <Census />}

@@ -4,6 +4,7 @@ The /int/* endpoints are INTERNAL: they exist only for MediTrack's own UI, are u
 policy forbids external systems from calling them. External systems use the interoperability layer added in
 v3.4: the FHIR R4 API (/fhir), SMART on FHIR (/smart) and outbound event webhooks.
 """
+import os
 import re
 import shutil
 import threading
@@ -202,14 +203,14 @@ def start_background_jobs():
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     HOTFOLDER.mkdir(parents=True, exist_ok=True)
     threading.Thread(target=hotfolder_importer, daemon=True).start()
+    if os.getenv("WEBHOOK_DISPATCHER", "on") != "off":
+        from .events import start_dispatcher
+        start_dispatcher()
 
 
 def _emit(conn, event_type: str, ip_no: str, extra: dict | None = None) -> None:
-    """Queue an outbound webhook event (implemented in events.py, v3.4)."""
-    try:
-        from .events import emit
-    except ImportError:   # interoperability layer not installed
-        return
+    """Queue an outbound webhook event in the same transaction as the change (outbox pattern, events.py)."""
+    from .events import emit
     emit(conn, event_type, ip_no, extra)
 
 
@@ -271,13 +272,10 @@ def healthz():
 
 # ---------------------------------------------------------------- interoperability layer (v3.4)
 def _mount_interop() -> None:
-    for mod in ("fhir", "smart", "events"):
-        try:
-            m = __import__(f"{__package__}.{mod}", fromlist=["router"])
-        except ImportError:
-            continue
-        if hasattr(m, "router"):
-            app.include_router(m.router)
+    from . import events, fhir, smart
+    fhir.install(app)
+    for m in (fhir, smart, events):
+        app.include_router(m.router)
 
 
 _mount_interop()
