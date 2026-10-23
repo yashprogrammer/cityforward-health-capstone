@@ -32,9 +32,13 @@ def register_integrations(conn) -> None:
     conn.execute("INSERT INTO SMT_CLIENT VALUES (%s,%s,'PUBLIC',%s,NULL,%s,1,%s)",
                  ("cityforward-ai-dashboard", "CityForward AI clinical dashboard", redirects,
                   "launch openid fhirUser patient/*.read patient/DocumentReference.write user/Practitioner.read", now()))
-    if os.getenv("AI_BACKEND_JWKS"):
+    jwks = os.getenv("AI_BACKEND_JWKS")
+    jwks_file = os.getenv("AI_BACKEND_JWKS_FILE")      # the vendor hands IT a public key file; only the PUBLIC half ever reaches the hospital
+    if not jwks and jwks_file and os.path.exists(jwks_file):
+        jwks = open(jwks_file).read()
+    if jwks:
         conn.execute("INSERT INTO SMT_CLIENT VALUES (%s,%s,'BACKEND',NULL,%s,%s,1,%s)",
-                     ("cityforward-ai-backend", "CityForward AI backend service", json.dumps(json.loads(os.environ["AI_BACKEND_JWKS"])),
+                     ("cityforward-ai-backend", "CityForward AI backend service", json.dumps(json.loads(jwks)),
                       "system/*.read system/DocumentReference.write", now()))
     if os.getenv("AI_WEBHOOK_URL"):
         conn.execute("INSERT INTO SYS_WEBHOOK (WH_NM, WH_URL, WH_SECRET, EVENTS, IS_ACTV, CRT_BY, CRT_DT) VALUES (%s,%s,%s,%s,1,'it.admin',%s)",
