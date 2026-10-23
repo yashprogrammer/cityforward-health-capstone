@@ -13,11 +13,12 @@ from pydantic import BaseModel, Field
 
 from .chart import Chart, Fact
 from .gateway import Gateway
-from . import cds
+from . import cache, cds
 from .grounding import check_statement
 from .llm import LLMError
 
 MAX_REVISIONS = 1
+PROMPT_VERSION = "summary-v1"      # bump when SYSTEM or the evidence format changes: it is part of the cache key
 
 
 class Finding(BaseModel):
@@ -49,6 +50,7 @@ class SummaryResult(BaseModel):
     model: str = ""
     problems: list[str] = Field(default_factory=list)
     note: str = ""
+    cached: bool = False
 
 
 class State(TypedDict, total=False):
@@ -199,3 +201,18 @@ def summarize(gw: Gateway, chart: Chart, principal=None) -> SummaryResult:
     global _GRAPH
     _GRAPH = _GRAPH or _build()
     return _GRAPH.invoke({"gw": gw, "chart": chart, "principal": principal})["result"]
+
+
+def summarize_cached(gw: Gateway, chart: Chart, principal) -> SummaryResult:
+    """Same as `summarize`, but an unchanged chart + prompt + model costs no second model call."""
+    if not gw.online:
+        return summarize(gw, chart, principal)
+    facts = select_facts(chart)
+    key = cache.make_key("summary", PROMPT_VERSION, gw.model, chart.patient_id, [f.text for f in facts.values()])
+    hit = cache.get("summary", key, principal)
+    if hit:
+        return SummaryResult.model_validate({**hit, "cached": True})
+    res = summarize(gw, chart, principal)
+    if res.mode == "llm":
+        cache.put("summary", key, chart.patient_id, chart.unit, res.model_dump(), principal)
+    return res

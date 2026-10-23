@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ask as ask_mod
-from . import audit, breakglass, cds, coding_api, dashboard, db, events, priorauth_api, rag, summary, telemetry
+from . import audit, breakglass, cds, coding_api, dashboard, db, events, priorauth_api, rag, summary, telemetry, usage
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -54,6 +54,7 @@ app.include_router(coding_api.router)
 app.include_router(breakglass.router)
 app.include_router(events.router)
 app.include_router(dashboard.router)
+app.include_router(usage.router)
 
 
 def _chart(patient_id: str):
@@ -108,7 +109,7 @@ def ask_patient(patient_id: str, body: AskIn = Body(...), p: Principal = Current
 @app.post("/api/patients/{patient_id}/summary")
 def patient_summary(patient_id: str, p: Principal = CurrentUser):
     authorize(p, "summary", patient_id)
-    res = summary.summarize(rt.get_gateway(), _chart(patient_id), principal=p)
+    res = summary.summarize_cached(rt.get_gateway(), _chart(patient_id), p)
     if res.mode != "llm":
         telemetry.FALLBACKS.labels("summary").inc()
     return {**res.model_dump(), "cds": cds.envelope("summary", [{"ref": x.ref, "text": x.text} for x in res.sources.values()], generated=res.mode == "llm")}

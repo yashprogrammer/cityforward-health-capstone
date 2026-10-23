@@ -70,6 +70,7 @@ class OpenAICompatible:
         from langchain_openai import ChatOpenAI   # lazy: offline mode and tests need no model client
         self.name = f"{name}:{model}"
         self.model = model
+        self.base_url, self.api_key = base_url, api_key
         self._chat = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0, timeout=timeout, max_retries=1)
 
     def chat(self, system: str, user: str) -> Reply:
@@ -81,8 +82,29 @@ class OpenAICompatible:
         return Reply(r.content if isinstance(r.content, str) else str(r.content), u.get("input_tokens", 0), u.get("output_tokens", 0))
 
 
+class RoutedBackend:
+    """Different models for different jobs: a cheap fast model for coding suggestions, a stronger one for summaries.
+    Configure with LLM_MODEL_<PURPOSE>=model (e.g. LLM_MODEL_CODING=openai/gpt-oss-20b); the gateway passes the purpose of each call."""
+
+    def __init__(self, default: Backend, overrides: dict[str, Backend]):
+        self.default, self.overrides = default, overrides
+        self.name = default.name
+
+    def for_purpose(self, purpose: str) -> Backend:
+        return self.overrides.get(purpose, self.default)
+
+
 def get_backend(provider: str | None = None) -> Backend | None:
-    """None means offline."""
+    """None means offline. Per-purpose model overrides (LLM_MODEL_SUMMARY, LLM_MODEL_CODING, ...) wrap the default in a RoutedBackend."""
+    base = _get_backend(provider)
+    overrides = {k[len("LLM_MODEL_"):].lower().replace("_", "-"): v for k, v in os.environ.items() if k.startswith("LLM_MODEL_") and v}
+    if base is None or not overrides or not isinstance(base, OpenAICompatible):
+        return base
+    first = base.name.split(":", 1)[0]
+    return RoutedBackend(base, {purpose: OpenAICompatible(first, base.base_url, base.api_key, model) for purpose, model in overrides.items()})
+
+
+def _get_backend(provider: str | None = None) -> Backend | None:
     provider = (provider or os.getenv("LLM_PROVIDER") or ("groq" if os.getenv("GROQ_API_KEY") else "offline")).lower()
     if provider == "groq":
         key = os.getenv("GROQ_API_KEY")

@@ -67,7 +67,7 @@ def rt(meditrack):
 def clean_db(rt):
     from copilot import db
     with db.session() as c:
-        c.execute("TRUNCATE chunk, patient_index, llm_call RESTART IDENTITY")
+        c.execute("TRUNCATE chunk, patient_index, llm_call, result_cache RESTART IDENTITY")
         c.execute("ALTER TABLE audit_log DISABLE TRIGGER USER")      # the test harness plays the DBA; the app cannot do this
         c.execute("TRUNCATE audit_log RESTART IDENTITY")
         c.execute("ALTER TABLE audit_log ENABLE TRIGGER USER")

@@ -18,6 +18,8 @@ REDACTIONS = Counter("copilot_redactions_total", "Identifiers replaced before a 
 FALLBACKS = Counter("copilot_fallback_total", "AI outputs replaced by the no-AI fallback", ["feature"], registry=REGISTRY)
 ACCESS = Counter("copilot_access_total", "Authorization decisions", ["action", "outcome"], registry=REGISTRY)
 EVENTS = Counter("copilot_events_total", "EHR events processed", ["type", "status"], registry=REGISTRY)
+BUDGET_BLOCKED = Counter("copilot_budget_blocked_total", "Model calls refused because the daily budget was reached", registry=REGISTRY)
+CACHE = Counter("copilot_cache_total", "Result cache lookups", ["feature", "outcome"], registry=REGISTRY)
 AUDIT_FAILURES = Counter("copilot_audit_failures_total", "Audit records that could not be written", registry=REGISTRY)
 HTTP_SECONDS = Histogram("copilot_http_request_seconds", "API latency by route template", ["method", "route", "status"], registry=REGISTRY,
                          buckets=(.05, .1, .25, .5, 1, 2, 5, 10, 30))

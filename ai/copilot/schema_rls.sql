@@ -32,7 +32,7 @@ $$;
 DO $$
 DECLARE t text;
 BEGIN
-    FOREACH t IN ARRAY ARRAY['chunk', 'patient_index', 'prior_auth', 'coding_worksheet'] LOOP
+    FOREACH t IN ARRAY ARRAY['chunk', 'patient_index', 'prior_auth', 'coding_worksheet', 'result_cache'] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
         EXECUTE format('DROP POLICY IF EXISTS unit_scope ON %I', t);
