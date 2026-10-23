@@ -2,3 +2,5 @@
 **/.pytest_cache
 tests
 keys
+dashboard/node_modules
+dashboard/dist

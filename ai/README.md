@@ -72,3 +72,14 @@ Events our own filings cause are ignored (no loops), and the payload's `fhirBase
 
 `evalkit/` is the golden-set harness (see `evalkit/README.md`): automatic metrics plus a clinician review pack and release gates. Hybrid retrieval expands clinical synonyms (`rag.SYNONYMS`): the evaluation is what showed that
 "oxygen saturation" does not find "SpO2" with a lexical embedder.
+
+## The clinical dashboard (Build Session 6)
+
+`dashboard/` is a React SMART on FHIR app, launched from MediTrack's External Links (EHR launch + PKCE in the browser, token held in memory only). Tabs: **Overview** (rule-based flags, each with its rule and evidence;
+stay summary whose every statement links to its source), **Timeline**, **Ask the chart**, **Prior authorization** and **Coding** (the human-in-the-loop workflows). The right-hand **Why** panel shows the rule or the
+verbatim chart text behind whatever you select; "About this tool" shows the intended use (FDA CDS criteria 3 and 4). Flags are rules over chart facts, never risk scores (`dashboard.py`).
+
+```bash
+cd ai/dashboard && npm ci && npm run build          # served by the service at /ai/ (the Docker image builds it)
+python ai/e2e/smoke.py ./shots                      # browser smoke test of the whole flow
+```

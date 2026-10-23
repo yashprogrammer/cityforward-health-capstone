@@ -44,6 +44,7 @@ services:
       AI_WEBHOOK_SECRET: ${AI_WEBHOOK_SECRET:-dev-webhook-secret}
       AI_BACKEND_JWKS_FILE: /keys/ai-backend.jwks.json
       AI_WEBHOOK_URL: http://ai:8080/webhooks/meditrack
+      AI_LAUNCH_URL: ${PUBLIC_BASE_URL:-http://localhost:8001}/ai/launch
     volumes: [docs:/data/documents, hotfolder:/data/import_hotfolder, "aikeys:/keys:ro"]
     depends_on:
       db: {condition: service_healthy}

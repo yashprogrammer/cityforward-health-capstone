@@ -29,16 +29,22 @@ class PayerClient:
             raise PayerError(r.status_code, detail)
         return r.json()
 
+    def _call(self, method: str, path: str, **kw) -> dict:
+        try:
+            return self._check(self.http.request(method, f"{self.base}{path}", **kw))
+        except httpx.HTTPError as e:      # connection refused, timeout: say so plainly instead of a 500
+            raise PayerError(0, f"the insurer's prior-authorization service is unreachable ({type(e).__name__})") from e
+
     def rule(self, code: str, plan: str | None) -> dict:
         """The policy for a service, and whether this plan requires prior authorization for it."""
-        return self._check(self.http.get(f"{self.base}/rules/{code}", params={"plan": plan} if plan else None))
+        return self._call("GET", f"/rules/{code}", params={"plan": plan} if plan else None)
 
     def submit(self, bundle: dict) -> dict:
-        r = self._check(self.http.post(f"{self.base}/fhir/Claim/$submit", json=bundle, headers={"X-Api-Key": self.api_key, "Content-Type": FHIR_JSON}))
+        r = self._call("POST", "/fhir/Claim/$submit", json=bundle, headers={"X-Api-Key": self.api_key, "Content-Type": FHIR_JSON})
         return next(e["resource"] for e in r["entry"] if e["resource"]["resourceType"] == "ClaimResponse")
 
     def poll(self, claim_response_id: str) -> dict:
-        return self._check(self.http.get(f"{self.base}/fhir/ClaimResponse/{claim_response_id}"))
+        return self._call("GET", f"/fhir/ClaimResponse/{claim_response_id}")
 
 
 def review_action(cr: dict) -> str:

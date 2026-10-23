@@ -1,13 +1,17 @@
 """The Copilot HTTP API (FastAPI). Mounted by the hospital gateway under /ai (prefix stripped)."""
 from contextlib import asynccontextmanager
 
+import os
 import uuid
+from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ask as ask_mod
-from . import audit, breakglass, cds, coding_api, db, events, priorauth_api, rag, summary
+from . import audit, breakglass, cds, coding_api, dashboard, db, events, priorauth_api, rag, summary
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -48,6 +52,7 @@ app.include_router(priorauth_api.router)
 app.include_router(coding_api.router)
 app.include_router(breakglass.router)
 app.include_router(events.router)
+app.include_router(dashboard.router)
 
 
 def _chart(patient_id: str):
@@ -117,3 +122,28 @@ def audit_search(patient: str | None = None, actor: str | None = None, action: s
 def audit_verify(p: Principal = CurrentUser):
     authorize(p, "audit.view")
     return audit.verify_chain()
+
+
+# ---------------------------------------------------------------------------------------------- the SMART app (built React bundle)
+DASH = Path(os.getenv("DASHBOARD_DIR", Path(__file__).resolve().parents[1] / "dashboard" / "dist"))
+
+if (DASH / "index.html").exists():
+    app.mount("/assets", StaticFiles(directory=DASH / "assets"), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/launch", include_in_schema=False)
+    @app.get("/auth/callback", include_in_schema=False)
+    def spa():
+        return FileResponse(DASH / "index.html", headers={"Cache-Control": "no-store"})
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    # the app talks only to its own origin (the gateway) and may be embedded only by the EHR page on the same site
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
+    if request.url.path.startswith(("/api", "/webhooks")):
+        response.headers["Cache-Control"] = "no-store"
+    return response

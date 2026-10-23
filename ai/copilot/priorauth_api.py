@@ -79,7 +79,10 @@ def _chart_and_draft(r: dict):
 def suggestions(patient_id: str, p: Principal = CurrentUser):
     authorize(p, "priorauth.view", patient_id)
     chart = load_chart(_rt().get_fhir(), patient_id)
-    return priorauth.suggest_services(chart, deps.get_payer())
+    try:
+        return priorauth.suggest_services(chart, deps.get_payer())
+    except PayerError as e:
+        raise HTTPException(502, str(e)) from e
 
 
 class DraftIn(BaseModel):

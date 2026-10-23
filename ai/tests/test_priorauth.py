@@ -147,3 +147,16 @@ def test_snf_manual_review_is_queued_then_certified(env, client, meditrack, paye
 def test_it_admin_sees_no_patient_data(env, client, meditrack):
     pid = pid_of(env, WHITAKER)
     assert client.get(f"/api/patients/{pid}/prior-auth", headers=tok(meditrack, WHITAKER, "it.admin")).status_code == 403
+
+
+def test_payer_outage_is_a_clear_502_not_a_crash(env, client, meditrack, monkeypatch):
+    import httpx
+    from copilot import priorauth_api
+    from copilot.payer_client import PayerClient
+    pid = pid_of(env, WHITAKER)
+    dead = PayerClient(http=httpx.Client(transport=httpx.MockTransport(lambda r: (_ for _ in ()).throw(httpx.ConnectError("refused")))), base="http://payer")
+    monkeypatch.setattr(priorauth_api.deps, "payer", dead)
+    r = client.get(f"/api/patients/{pid}/prior-auth/suggestions", headers=tok(meditrack, WHITAKER, "pa.hughes"))
+    assert r.status_code == 502 and "unreachable" in r.json()["detail"]
+    r = client.post(f"/api/patients/{pid}/prior-auth", headers=tok(meditrack, WHITAKER, "pa.hughes"), json={"service_code": "E1390"})
+    assert r.status_code == 502
