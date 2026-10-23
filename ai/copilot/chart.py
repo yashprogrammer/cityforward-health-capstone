@@ -148,7 +148,7 @@ class Chart(BaseModel):
         for e in self.encounters:
             f.append(Fact(ref=f"Encounter/{e.id}", kind="encounter", when=e.start, encounter=e.id,
                           text=f"{e.type} ({e.cls}) {e.start[:10]} to {(e.end or 'ongoing')[:10]}" + (f", {e.location}" if e.location else "")
-                               + (f"; reason: {e.reason}" if e.reason else "") + (f"; attending {e.practitioner}" if e.practitioner else "")
+                               + (f"; reason: {e.reason}" if e.reason else "")
                                + (f"; discharge disposition: {e.disposition}" if e.disposition else "")))
         for c in self.conditions:
             f.append(Fact(ref=c.ref, kind="diagnosis", when=c.onset, encounter=c.encounter,
@@ -234,7 +234,7 @@ def chart_from_fhir(resources: list[dict], fetch=None) -> Chart:
             id=e["id"], cls=e["class"]["code"], type=_text((e.get("type") or [{}])[0]) or "Visit", start=e["period"]["start"], end=e["period"].get("end"),
             status=e.get("status", ""), reason=_text((e.get("reasonCode") or [{}])[0]) or None,
             unit=ext.get("ward-code", {}).get("valueCode"), location=((e.get("location") or [{}])[0].get("location") or {}).get("display"),
-            practitioner=((e.get("participant") or [{}])[0].get("individual") or {}).get("display"),
+            practitioner=_rid(((e.get("participant") or [{}])[0].get("individual") or {}).get("reference")),
             disposition=_text((e.get("hospitalization") or {}).get("dischargeDisposition"))))
     chart.encounters.sort(key=lambda e: e.start)
     stay = chart.current_encounter()

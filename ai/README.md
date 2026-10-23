@@ -16,6 +16,7 @@ MediTrack (EHR) --FHIR R4 / SMART--> copilot ──> Postgres+pgvector (chunks, 
 | `rag.py`, `embeddings.py` | chunk index in Postgres; hybrid retrieval (pgvector cosine + full-text, fused with RRF), hard-scoped to one patient |
 | `gateway.py`, `llm.py` | the only door to a model: JSON validation, token/latency/cost metering; redaction and audit hook in here |
 | `ask.py`, `summary.py` | LangGraph graphs: retrieve/draft -> **ground** (code checks citations and numbers) -> one revision -> deterministic fallback |
+| `priorauth.py`, `priorauth_api.py`, `payer_client.py` | **Build Session 3.** Reads the payer's policy, assembles evidence per requirement (code where it can, a model where it must, code verifies the model), a clinician reviews/attests/approves, then a Da Vinci PAS-style `Claim/$submit`; the packet is filed back into the chart |
 | `auth.py`, `access.py` | verify the SMART user token (RS256 via MediTrack's JWKS); patient-launch scope and unit-level access |
 
 Run the tests (needs PostgreSQL with pgvector; they seed MediTrack and the copilot database):
@@ -26,3 +27,13 @@ PYTHONPATH=ai:customer pytest ai/tests
 
 Embeddings: the default `hash` embedder is dependency-free and lexical (fine for tests; it will not connect "antiplatelet" to "ticagrelor").
 Build the image with `--build-arg FASTEMBED=1` and set `EMBEDDER=fastembed` for real semantic search (bge-small, local CPU, nothing leaves the VPC).
+
+## Prior authorization: who does what
+
+| Step | Who | Notes |
+|---|---|---|
+| Suggest services | assistant | pattern-match chart text (SNF, walker, home oxygen, home health), then ask the payer whether *this plan* requires PA |
+| Draft | PA coordinator / clinician | diagnoses and "midnights" are computed from the chart; measurements and documents come from the model, **verified in code** (citation exists, every number is in the cited passage, value meets the policy, measurement is fresh) |
+| Attest | treating clinician only | the assistant never attests |
+| Approve | attending only | needs no open requirement, or a written reason to submit with gaps |
+| Submit / poll | PA coordinator or clinician | pended requests (`A4`) reopen for edits and are resubmitted under the same identifier |

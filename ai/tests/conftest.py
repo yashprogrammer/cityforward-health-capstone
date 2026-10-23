@@ -112,3 +112,51 @@ def user_token(meditrack, ip_no, user="attending.raman", scope="launch openid fh
 
 def bearer(tok):
     return {"Authorization": f"Bearer {tok}"}
+
+
+class RuleBasedLLM:
+    """A deterministic stand-in for the model on the prior-auth task: for each requirement it cites the first passage matching a regex
+    and quotes the matching sentence, so the grounding code gets realistic input. `mapping`: requirement id -> (passage regex, value regex | None)."""
+    name = "rulebased:test"
+
+    def __init__(self, mapping, tamper=None):
+        import re
+        self.mapping, self.tamper, self.prompts = mapping, tamper or {}, []
+        self.re = re
+
+    def chat(self, system, user):
+        self.prompts.append((system, user))
+        passages = dict(self.re.findall(r"^\[(C\d+)\] (.*)$", user, flags=self.re.M))
+        wanted = self.re.findall(r"^- (\S+) \(", user.split("CHART PASSAGES")[0], flags=self.re.M)
+        items = []
+        for rid in wanted:
+            rx, vrx = self.mapping.get(rid, (None, None))
+            hit = next(((c, t) for c, t in passages.items() if rx and self.re.search(rx, t, self.re.I)), None)
+            if not hit:
+                items.append({"requirement_id": rid, "supported": False})
+                continue
+            cid, text = hit
+            sentence = next((s.strip() for s in self.re.split(r"(?<=[.!?])\s+", text) if self.re.search(rx, s, self.re.I)), text[:200])
+            value, when = None, None
+            if vrx:
+                m = self.re.search(vrx, text)
+                value = float(m.group(1)) if m else None
+                d = self.re.search(r"(\d{4}-\d{2}-\d{2})", text)
+                when = d.group(1) if d else None
+            item = {"requirement_id": rid, "supported": True, "value": value, "measured_on": when, "statement": sentence, "citations": [cid]}
+            item.update(self.tamper.get(rid, {}))
+            items.append(item)
+        text = json.dumps({"items": items})
+        return Reply(text, tokens_in=len(user) // 4, tokens_out=len(text) // 4)
+
+
+@pytest.fixture(scope="session")
+def payer():
+    from fastapi.testclient import TestClient
+    from mock_payer import app as payer_app
+    from copilot import priorauth_api
+    from copilot.payer_client import PayerClient
+    payer_app.REVIEW_SECONDS = 0.3
+    with TestClient(payer_app.app) as c:
+        priorauth_api.deps.payer = PayerClient(http=c, base="http://payer", api_key=payer_app.API_KEY)
+        yield c
