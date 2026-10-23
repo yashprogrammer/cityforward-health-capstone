@@ -1,7 +1,8 @@
 # CityForward Health - local stack.
 #   docker compose up --build          the customer's world: Postgres, MediTrack (+ FHIR/SMART/webhooks), mock payer, gateway
 #   docker compose --profile idp up    + Keycloak (the hospital's identity provider)
-# MediTrack: http://localhost:8001        mock payer: http://localhost:8003/rules
+# MediTrack: http://localhost:8001        mock payer: http://localhost:8003/rules      AI service (via the gateway): http://localhost:8001/ai/healthz
+#   export GROQ_API_KEY=...   to switch the AI from its offline template mode to openai/gpt-oss-20b on Groq
 name: cityforward
 
 x-customer: &customer
@@ -23,6 +24,15 @@ services:
       interval: 2s
       retries: 40
 
+  keygen:   # the AI vendor's key pair for SMART Backend Services; only the PUBLIC half (JWKS) goes to the hospital
+    build: {context: ., dockerfile: ai/Dockerfile}
+    image: cityforward-ai
+    restart: "no"
+    user: "0"
+    entrypoint: ["python", "scripts/gen_keys.py", "/keys"]
+    environment: {KEYGEN_SHARED: "1"}
+    volumes: [aikeys:/keys]
+
   seed:   # first-start data load (Synthea + golden patients). Re-run with: docker compose run --rm seed --force
     <<: *customer
     restart: "no"
@@ -31,12 +41,13 @@ services:
       MEDITRACK_DB_URL: postgresql://meditrack:meditrack@db:5432/meditrack
       MEDITRACK_DOCS_DIR: /data/documents
       MEDITRACK_HOTFOLDER: /data/import_hotfolder
-      AI_WEBHOOK_URL: ${AI_WEBHOOK_URL:-}
       AI_WEBHOOK_SECRET: ${AI_WEBHOOK_SECRET:-dev-webhook-secret}
-      AI_BACKEND_JWKS: ${AI_BACKEND_JWKS:-}
-    volumes: [docs:/data/documents, hotfolder:/data/import_hotfolder]
+      AI_BACKEND_JWKS_FILE: /keys/ai-backend.jwks.json
+      AI_WEBHOOK_URL: http://ai:8080/webhooks/meditrack
+    volumes: [docs:/data/documents, hotfolder:/data/import_hotfolder, "aikeys:/keys:ro"]
     depends_on:
       db: {condition: service_healthy}
+      keygen: {condition: service_completed_successfully}
 
   meditrack:
     <<: *customer
@@ -48,6 +59,26 @@ services:
     volumes: [docs:/data/documents, hotfolder:/data/import_hotfolder]
     depends_on:
       seed: {condition: service_completed_successfully}
+
+  ai:   # the vendor's service (what the course builds): RAG, prior-auth drafting, coding, audit, webhooks
+    build: {context: ., dockerfile: ai/Dockerfile}
+    image: cityforward-ai
+    restart: unless-stopped
+    environment:
+      COPILOT_DB_URL: postgresql://copilot:copilot@db:5432/copilot
+      MEDITRACK_BASE_URL: http://meditrack:8001
+      PAYER_BASE_URL: http://payer:8003
+      PAYER_API_KEY: ${PAYER_API_KEY:-demo-payer-key}
+      AI_BACKEND_KEY_FILE: /keys/ai-backend.pem
+      AI_WEBHOOK_SECRET: ${AI_WEBHOOK_SECRET:-dev-webhook-secret}
+      EMBEDDER: ${EMBEDDER:-hash}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    volumes: ["aikeys:/keys:ro"]
+    depends_on:
+      db: {condition: service_healthy}
+      keygen: {condition: service_completed_successfully}
+      meditrack: {condition: service_started}
 
   payer:    # the insurer's prior-authorization API (fictional)
     <<: *customer
@@ -61,7 +92,7 @@ services:
     restart: unless-stopped
     volumes: ["./customer/platform/compose/gateway/Caddyfile:/etc/caddy/Caddyfile:ro"]
     ports: ["${MEDITRACK_PORT:-8001}:80"]
-    depends_on: [meditrack]
+    depends_on: [meditrack, ai]
 
   keycloak:   # optional hospital IdP (docker compose --profile idp up)
     profiles: ["idp"]
@@ -74,6 +105,7 @@ services:
     ports: ["${KEYCLOAK_PORT:-8180}:8080"]
 
 volumes:
+  aikeys:
   pgdata:
   docs:
   hotfolder:

@@ -1,0 +1,14 @@
+fastapi==0.118.*
+uvicorn[standard]
+psycopg[binary,pool]
+httpx
+pyjwt[crypto]
+cryptography
+pydantic>=2.8
+langgraph>=1.0
+langchain-core>=1.0
+langchain-openai>=1.0
+pypdf
+fpdf2
+# tests
+pytest
