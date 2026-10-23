@@ -10,5 +10,10 @@ langchain-core>=1.0
 langchain-openai>=1.0
 pypdf
 fpdf2
+prometheus-client
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-httpx
 # tests
 pytest

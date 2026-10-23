@@ -1,0 +1,27 @@
+# Azure Kubernetes Service: managed PostgreSQL (private), Azure Files for the hot folder, Key Vault-backed secrets, pinned image digests, enforced network policy.
+images:
+  customer: {repository: cityforwardacr.azurecr.io/cityforward-customer, tag: "1.0.0"}     # replace tag with @sha256:<digest> from the release pipeline
+  ai: {repository: cityforwardacr.azurecr.io/cityforward-ai, tag: "1.0.0"}
+postgres: {enabled: false}
+externalDatabase: {secretName: cityforward-db}              # synced from Key Vault by the CSI driver (see terraform/azure)
+ingress:
+  host: copilot.hospital.example
+  tls: {enabled: true, secretName: cityforward-tls}
+meditrack:
+  publicBaseUrl: https://copilot.hospital.example
+  persistence: {size: 20Gi, storageClass: azurefile-csi, accessMode: ReadWriteMany}
+copilot:
+  replicas: 3
+  embedder: fastembed
+  llm: {provider: foundry, model: gpt-oss-20b, baseUrl: "https://<foundry-endpoint>/openai/v1"}
+  keycloak: {issuer: "https://idp.hospital.example/realms/cityforward", internalUrl: "http://keycloak.identity:8080/realms/cityforward", audience: cityforward-ai}
+  otel: {endpoint: "http://otel-collector.observability:4318"}
+networkPolicy:
+  enabled: true
+  llmEgressCidrs: ["10.20.8.0/24"]            # the private endpoint subnet of the model service
+serviceMonitor: {enabled: true}
+keyVault:
+  enabled: true
+  name: kv-cityforward-xxxxx                  # terraform output key_vault_name
+  tenantId: "00000000-0000-0000-0000-000000000000"
+  workloadIdentityClientId: "00000000-0000-0000-0000-000000000000"   # terraform output copilot_identity_client_id

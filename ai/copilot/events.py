@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from . import audit, coding_api, db, priorauth, priorauth_api, rag
+from . import audit, coding_api, db, priorauth, priorauth_api, rag, telemetry
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -144,6 +144,7 @@ def process_due(limit: int = 10) -> int:
         with db.system() as c:
             c.execute("""UPDATE event_inbox SET status=%s, last_error=%s, result=%s, processed_at=CASE WHEN %s='DONE' THEN now() ELSE processed_at END,
                          next_try=COALESCE(%s, next_try) WHERE id=%s""", (status, err, json.dumps(result) if result is not None else None, status, nxt, r["id"]))
+        telemetry.EVENTS.labels(r["type"], status).inc()
         audit.log("svc.event-worker", f"event.{r['type']}.{status.lower()}", r["patient_id"] or None, "allowed" if status == "DONE" else "error",
                   {"event_id": r["event_id"], "attempt": r["attempts"], **({"error": err} if err else {})})
     return len(rows)

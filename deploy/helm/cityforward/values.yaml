@@ -1,0 +1,77 @@
+# Defaults are the secure, production-shaped choice; values-kind.yaml relaxes only what a laptop needs.
+global:
+  environment: dev
+  imagePullPolicy: IfNotPresent
+
+images:
+  customer: {repository: cityforward-customer, tag: latest}      # MediTrack + mock payer + seed job (the customer's world)
+  ai: {repository: cityforward-ai, tag: latest}                  # the Copilot service. Production values pin an immutable digest (see values-aks.yaml)
+  postgres: {repository: pgvector/pgvector, tag: pg16}
+
+ingress:
+  enabled: true
+  className: nginx
+  host: ""                      # empty = match any host (kind)
+  tls: {enabled: false, secretName: ""}
+
+# ---- databases -------------------------------------------------------------------------------------------------------------------------
+# dev/kind: a single in-cluster Postgres (pgvector) with the two databases and roles the vendor and the hospital would each own.
+# production: set postgres.enabled=false and point externalDatabase at the managed server (secret holds the full connection URLs).
+postgres:
+  enabled: true
+  storage: 5Gi
+  storageClass: ""
+externalDatabase:
+  secretName: cityforward-db     # keys: meditrack-url, copilot-url (and, for in-cluster Postgres, the generated role passwords)
+
+meditrack:
+  replicas: 1                    # the legacy EHR is a single instance by design
+  publicBaseUrl: ""              # what browsers use (token audience). Empty = derived from ingress.host
+  persistence: {size: 2Gi, storageClass: "", accessMode: ReadWriteOnce}     # documents + import hot folder (Azure Files, ReadWriteMany, in AKS)
+  resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 512Mi}}
+payer:
+  replicas: 1
+  apiKeySecret: cityforward-payer
+  resources: {requests: {cpu: 50m, memory: 96Mi}, limits: {cpu: 500m, memory: 192Mi}}
+
+copilot:
+  replicas: 2
+  resources: {requests: {cpu: 200m, memory: 512Mi}, limits: {cpu: "1", memory: 1Gi}}
+  keysSecret: cityforward-ai-keys              # created by the bootstrap: ai-backend.pem (private key for SMART Backend Services)
+  jwksConfigMap: cityforward-ai-jwks           # the PUBLIC key set, handed to the hospital's seed job
+  webhookSecret: cityforward-webhook           # key: secret
+  embedder: hash                               # hash | fastembed (image built with FASTEMBED=1)
+  llm:
+    provider: groq                             # groq | foundry | offline
+    model: openai/gpt-oss-20b
+    baseUrl: ""
+    secretName: cityforward-llm                # keys: api-key  (optional: absent = offline template mode)
+  keycloak: {issuer: "", internalUrl: "", audience: cityforward-ai}
+  otel: {endpoint: ""}                         # e.g. http://otel-collector.observability:4318
+  metricsPort: 9100
+  hpa: {enabled: true, min: 2, max: 6, cpu: 70}
+  eventWorker: "on"
+
+# Azure Key Vault as the source of truth for secrets (CSI driver + workload identity); the CSI driver materializes the Secrets the workloads reference above.
+keyVault:
+  enabled: false
+  name: ""
+  tenantId: ""
+  workloadIdentityClientId: ""
+  # Key Vault secret name -> Kubernetes Secret / key it is synced to
+  objects:
+    - {name: meditrack-url, secret: cityforward-db, key: meditrack-url}
+    - {name: copilot-url, secret: cityforward-db, key: copilot-url}
+    - {name: copilot-webhook-secret, secret: cityforward-webhook, key: secret}
+    - {name: payer-api-key, secret: cityforward-payer, key: api-key}
+    - {name: llm-api-key, secret: cityforward-llm, key: api-key}
+    - {name: ai-backend-key, secret: cityforward-ai-keys, key: ai-backend.pem}
+    - {name: meditrack-signing-key, secret: cityforward-meditrack-signing, key: pem}
+
+networkPolicy:
+  enabled: true
+  ingressNamespace: ingress-nginx
+  monitoringNamespace: monitoring
+  llmEgressCidrs: ["0.0.0.0/0"]                # tighten to your provider's ranges, or front with an egress proxy / Azure Firewall FQDN rules
+serviceMonitor: {enabled: false}               # needs the Prometheus operator CRDs
+podAnnotations: {}

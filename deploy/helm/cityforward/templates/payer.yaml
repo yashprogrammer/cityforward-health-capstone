@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: payer
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "cf.selector" (dict "name" "payer" "root" .) | nindent 4 }}
+  ports: [{name: http, port: 8003, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payer
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.payer.replicas }}
+  selector:
+    matchLabels: {{- include "cf.selector" (dict "name" "payer" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "cf.selector" (dict "name" "payer" "root" .) | nindent 8 }}
+    spec:
+      serviceAccountName: payer
+      automountServiceAccountToken: false
+      securityContext: {{- include "cf.podSecurity" . | nindent 8 }}
+      containers:
+        - name: payer
+          image: {{ include "cf.image" .Values.images.customer }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - {name: APP_ROLE, value: payer}
+            - {name: PAYER_API_KEY, valueFrom: {secretKeyRef: {name: {{ .Values.payer.apiKeySecret }}, key: api-key}}}
+          ports: [{name: http, containerPort: 8003}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 20}
+          resources: {{- toYaml .Values.payer.resources | nindent 12 }}
+          securityContext: {{- include "cf.containerSecurity" . | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]

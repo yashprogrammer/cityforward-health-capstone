@@ -1,0 +1,27 @@
+# Versions are ranges on purpose: pin exact chart versions after the first successful sync.
+# The authoring sandbox could not reach the chart repositories, so these charts are UNVERIFIED against the live registries.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-rules
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '1'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: cityforward
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  source:
+    repoURL: https://github.com/yashprogrammer/cityforward-health-capstone
+    targetRevision: integrated
+    path: deploy/platform/monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

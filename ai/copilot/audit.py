@@ -46,6 +46,8 @@ def log(principal, action: str, patient_id: str | None = None, outcome: str = "a
                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                       (ts, actor, role, action, patient_id, outcome, json.dumps(detail or {}), ctx.get("request_id"), ctx.get("client_ip"), prev_hash, _digest(prev_hash, row)))
     except Exception as e:   # noqa: BLE001
+        from . import telemetry
+        telemetry.AUDIT_FAILURES.inc()
         print(f"[AUDIT FAILURE] {action} {actor}: {e}")
 
 

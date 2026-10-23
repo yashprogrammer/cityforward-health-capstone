@@ -1,0 +1,111 @@
+# Admission rules for the application namespace. They encode the security review's promises as things the cluster refuses to violate.
+# Rollout: start with validationFailureAction: Audit, read the policy reports for a week, then switch to Enforce.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: cityforward-pod-security
+  annotations:
+    policies.kyverno.io/title: Workload hardening
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/description: Non-root, no privilege escalation, no capabilities, limits set, no floating image tags, immutable pull policy.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: run-as-non-root
+      match: {any: [{resources: {kinds: [Pod], namespaces: [cityforward]}}]}
+      validate:
+        message: "Containers must run as non-root with no privilege escalation and all capabilities dropped."
+        pattern:
+          spec:
+            securityContext: {runAsNonRoot: true}
+            containers:
+              - securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+    - name: require-resource-limits
+      match: {any: [{resources: {kinds: [Pod], namespaces: [cityforward]}}]}
+      validate:
+        message: "CPU and memory requests and a memory limit are required."
+        pattern:
+          spec:
+            containers:
+              - resources: {requests: {cpu: "?*", memory: "?*"}, limits: {memory: "?*"}}
+    - name: disallow-latest-tag
+      match: {any: [{resources: {kinds: [Pod], namespaces: [cityforward]}}]}
+      validate:
+        message: "Images must carry an immutable version or digest, never :latest or no tag."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest & *:* | *@sha256:*"
+    - name: no-host-namespaces-or-privileged
+      match: {any: [{resources: {kinds: [Pod], namespaces: [cityforward]}}]}
+      validate:
+        message: "hostNetwork, hostPID, hostIPC and privileged containers are not allowed."
+        pattern:
+          spec:
+            =(hostNetwork): false
+            =(hostPID): false
+            =(hostIPC): false
+            containers:
+              - =(securityContext): {=(privileged): false}
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: cityforward-supply-chain
+  annotations:
+    policies.kyverno.io/title: Only signed images from our registry
+    policies.kyverno.io/category: Supply Chain Security
+spec:
+  validationFailureAction: Enforce
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: registry-allow-list
+      match: {any: [{resources: {kinds: [Pod], namespaces: [cityforward]}}]}
+      validate:
+        message: "Images must come from the hospital-approved registry."
+        pattern:
+          spec:
+            containers:
+              - image: "cityforwardacr.azurecr.io/* | cr.l5d.io/linkerd/* | pgvector/pgvector:* | cityforward-*:*"      # Linkerd's injected proxy; the last two are the kind/dev images
+    - name: verify-image-signature
+      match: {any: [{resources: {kinds: [Pod], namespaces: [cityforward]}}]}
+      verifyImages:
+        - imageReferences: ["cityforwardacr.azurecr.io/cityforward-*"]
+          mutateDigest: true             # pins the tag to the verified digest
+          verifyDigest: true
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    # signed by the release workflow in this repository (GitHub OIDC identity, recorded in the Sigstore transparency log)
+                    subject: "https://github.com/yashprogrammer/cityforward-health-capstone/.github/workflows/release.yml@refs/heads/integrated"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor: {url: https://rekor.sigstore.dev}
+          attestations:
+            - type: https://spdx.dev/Document            # an SBOM must be attached to the image
+              conditions: [{all: [{key: "{{ creationInfo.created }}", operator: NotEquals, value: ""}]}]
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: cityforward-labels-and-secrets
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-part-of-label
+      match: {any: [{resources: {kinds: [Deployment, StatefulSet], namespaces: [cityforward]}}]}
+      validate:
+        message: "app.kubernetes.io/part-of is required (it drives network policy selection and cost reporting)."
+        pattern:
+          metadata:
+            labels: {app.kubernetes.io/part-of: "?*"}
+    - name: no-secrets-in-env-values
+      match: {any: [{resources: {kinds: [Pod], namespaces: [cityforward]}}]}
+      validate:
+        message: "Credentials must be injected from a Secret (valueFrom), not written into the manifest."
+        foreach:
+          - list: "request.object.spec.containers[].env[?contains(name, 'PASSWORD') || contains(name, 'API_KEY') || ends_with(name, '_SECRET')]"
+            deny:
+              conditions: {any: [{key: "{{ element.value || '' }}", operator: NotEquals, value: ""}]}

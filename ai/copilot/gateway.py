@@ -12,7 +12,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from . import audit, db
+from . import audit, db, telemetry
 from .llm import Backend, LLMError, cost_usd, extract_json
 
 T = TypeVar("T", bound=BaseModel)
@@ -42,6 +42,7 @@ class Gateway:
             (system, user), restorer, n_red = self.redactor.apply_all([system, user], patient_id=patient_id, context=context)
         t0 = time.perf_counter()
         status, reply = "error", None
+        span = telemetry.tracer().start_span("llm.call", attributes={"llm.purpose": purpose, "llm.model": self.model, "llm.redactions": n_red})
         try:
             reply = self.backend.chat(system, user)
             status = "invalid"
@@ -56,7 +57,10 @@ class Gateway:
         finally:
             ms = int((time.perf_counter() - t0) * 1000)
             tin, tout = (reply.tokens_in, reply.tokens_out) if reply else (0, 0)
+            span.set_attributes({"llm.tokens_in": tin, "llm.tokens_out": tout, "llm.status": status})
+            span.end()
             try:
+                telemetry.record_llm(dict(purpose=purpose, model=self.model, status=status, tokens_in=tin, tokens_out=tout, cost_usd=cost_usd(self.model, tin, tout), ms=ms, redactions=n_red))
                 self.recorder(dict(purpose=purpose, patient_id=patient_id, actor=actor, model=self.model, tokens_in=tin, tokens_out=tout, ms=ms,
                                    cost_usd=cost_usd(self.model, tin, tout), redactions=n_red, status=status))
             except Exception as e:   # noqa: BLE001 - metering must never take down a clinical request

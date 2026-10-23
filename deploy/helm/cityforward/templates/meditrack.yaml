@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: meditrack-data
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.meditrack.persistence.accessMode }}]
+  {{- if .Values.meditrack.persistence.storageClass }}
+  storageClassName: {{ .Values.meditrack.persistence.storageClass }}
+  {{- end }}
+  resources: {requests: {storage: {{ .Values.meditrack.persistence.size }}}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meditrack
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "cf.selector" (dict "name" "meditrack" "root" .) | nindent 4 }}
+  ports: [{name: http, port: 8001, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meditrack
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.meditrack.replicas }}
+  selector:
+    matchLabels: {{- include "cf.selector" (dict "name" "meditrack" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "cf.selector" (dict "name" "meditrack" "root" .) | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: meditrack
+      automountServiceAccountToken: false
+      securityContext: {{- include "cf.podSecurity" . | nindent 8 }}
+      containers:
+        - name: meditrack
+          image: {{ include "cf.image" .Values.images.customer }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - {name: APP_ROLE, value: meditrack}
+            - {name: MEDITRACK_DB_URL, valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.secretName }}, key: meditrack-url}}}
+            - {name: PUBLIC_BASE_URL, value: {{ include "cf.publicBase" . | quote }}}
+            - {name: SMART_SIGNING_KEY_PEM, valueFrom: {secretKeyRef: {name: cityforward-meditrack-signing, key: pem}}}
+            - {name: MEDITRACK_DOCS_DIR, value: /data/documents}
+            - {name: MEDITRACK_HOTFOLDER, value: /data/import_hotfolder}
+          ports: [{name: http, containerPort: 8001}]
+          readinessProbe: {httpGet: {path: /int/healthz, port: http}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /int/healthz, port: http}, periodSeconds: 20, failureThreshold: 6}
+          resources: {{- toYaml .Values.meditrack.resources | nindent 12 }}
+          securityContext: {{- include "cf.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /data/documents, subPath: documents}
+            - {name: data, mountPath: /data/import_hotfolder, subPath: import_hotfolder}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: meditrack-data}}
+        - {name: tmp, emptyDir: {}}

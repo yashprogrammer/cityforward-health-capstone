@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ask as ask_mod
-from . import audit, breakglass, cds, coding_api, dashboard, db, events, priorauth_api, rag, summary
+from . import audit, breakglass, cds, coding_api, dashboard, db, events, priorauth_api, rag, summary, telemetry
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -42,6 +42,7 @@ rt = Runtime()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_schema()
+    telemetry.start_metrics_server()
     events.start_worker()
     yield
     db.close_pool()
@@ -64,9 +65,13 @@ def _chart(patient_id: str):
 
 @app.middleware("http")
 async def request_context(request: Request, call_next):
+    import time
     rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
     audit.set_context(rid, request.client.host if request.client else None)
+    t0 = time.perf_counter()
     response = await call_next(request)
+    route = getattr(request.scope.get("route"), "path", None) or "unmatched"
+    telemetry.HTTP_SECONDS.labels(request.method, route, str(response.status_code)).observe(time.perf_counter() - t0)
     response.headers["x-request-id"] = rid
     return response
 
@@ -95,6 +100,8 @@ def ask_patient(patient_id: str, body: AskIn = Body(...), p: Principal = Current
     if not body.question.strip() or len(body.question) > 1000:
         raise HTTPException(422, "question must be 1-1000 characters")
     res = ask_mod.ask(rt.get_gateway(), patient_id, body.question.strip(), principal=p)
+    if res.mode != "llm":
+        telemetry.FALLBACKS.labels("ask").inc()
     return {**res.model_dump(), "cds": cds.envelope("ask", [{"ref": c.source_ref, "text": c.text} for c in res.citations], generated=res.mode == "llm")}
 
 
@@ -102,6 +109,8 @@ def ask_patient(patient_id: str, body: AskIn = Body(...), p: Principal = Current
 def patient_summary(patient_id: str, p: Principal = CurrentUser):
     authorize(p, "summary", patient_id)
     res = summary.summarize(rt.get_gateway(), _chart(patient_id), principal=p)
+    if res.mode != "llm":
+        telemetry.FALLBACKS.labels("summary").inc()
     return {**res.model_dump(), "cds": cds.envelope("summary", [{"ref": x.ref, "text": x.text} for x in res.sources.values()], generated=res.mode == "llm")}
 
 
@@ -147,3 +156,6 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith(("/api", "/webhooks")):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+telemetry.setup(app)

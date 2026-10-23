@@ -1,0 +1,40 @@
+# Versions are ranges on purpose: pin exact chart versions after the first successful sync.
+# The authoring sandbox could not reach the chart repositories, so these charts are UNVERIFIED against the live registries.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: linkerd-control-plane
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '-4'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: cityforward
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: linkerd
+  source:
+    repoURL: https://helm.linkerd.io/edge
+    chart: linkerd-control-plane
+    targetRevision: 2025.*
+    helm:
+      valuesObject:
+        identity:
+          issuer:
+            scheme: kubernetes.io/tls
+        identityTrustAnchorsPEM: ''
+        proxy:
+          resources:
+            cpu:
+              request: 50m
+            memory:
+              request: 64Mi
+              limit: 128Mi
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

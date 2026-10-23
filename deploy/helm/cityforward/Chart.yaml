@@ -1,0 +1,7 @@
+apiVersion: v2
+name: cityforward
+description: CityForward Health - MediTrack EHR, mock payer and the Copilot AI service (the vendor's deployment into the hospital's cluster)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.29.0-0"

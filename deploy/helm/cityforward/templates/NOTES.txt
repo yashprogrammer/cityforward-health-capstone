@@ -1,0 +1,9 @@
+CityForward is installed.
+
+  Prerequisites (created by deploy/kind/bootstrap.sh or by Terraform + Key Vault in Azure):
+    secrets: {{ .Values.copilot.keysSecret }}, cityforward-meditrack-signing, {{ .Values.copilot.webhookSecret }}, {{ .Values.payer.apiKeySecret }}
+    configmap: {{ .Values.copilot.jwksConfigMap }}   (the AI service's PUBLIC key set)
+
+  Open the EHR:           {{ include "cf.publicBase" . }}
+  The AI service health:  {{ include "cf.publicBase" . }}/ai/healthz
+  Smoke test:             helm test {{ .Release.Name }}

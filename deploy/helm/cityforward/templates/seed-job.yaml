@@ -1,0 +1,46 @@
+# What the hospital's IT does at go-live: load the EHR and onboard the AI vendor (register its public key, SMART app and webhook). Idempotent.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: meditrack-seed-{{ .Release.Revision }}
+  labels: {{- include "cf.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels: {{- include "cf.selector" (dict "name" "meditrack-seed" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: meditrack
+      automountServiceAccountToken: false
+      securityContext: {{- include "cf.podSecurity" . | nindent 8 }}
+      containers:
+        - name: seed
+          image: {{ include "cf.image" .Values.images.customer }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - {name: APP_ROLE, value: seed}
+            - {name: MEDITRACK_DB_URL, valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.secretName }}, key: meditrack-url}}}
+            - {name: MEDITRACK_DOCS_DIR, value: /data/documents}
+            - {name: MEDITRACK_HOTFOLDER, value: /data/import_hotfolder}
+            - {name: AI_BACKEND_JWKS_FILE, value: /jwks/ai-backend.jwks.json}
+            - {name: AI_WEBHOOK_URL, value: "http://copilot:8080/webhooks/meditrack"}
+            - {name: AI_LAUNCH_URL, value: {{ printf "%s/ai/launch" (include "cf.publicBase" .) | quote }}}
+            - {name: AI_WEBHOOK_SECRET, valueFrom: {secretKeyRef: {name: {{ .Values.copilot.webhookSecret }}, key: secret}}}
+            - {name: SMART_APP_REDIRECT_URIS, value: {{ printf "%s/ai/auth/callback" (include "cf.publicBase" .) | quote }}}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 512Mi}}
+          securityContext: {{- include "cf.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /data/documents, subPath: documents}
+            - {name: data, mountPath: /data/import_hotfolder, subPath: import_hotfolder}
+            - {name: jwks, mountPath: /jwks, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: meditrack-data}}
+        - {name: jwks, configMap: {name: {{ .Values.copilot.jwksConfigMap }}}}
+        - {name: tmp, emptyDir: {}}

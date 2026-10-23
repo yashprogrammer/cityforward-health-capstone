@@ -1,0 +1,16 @@
+# The only thing applied by hand: `kubectl apply -f deploy/argocd/root-app.yaml`. Everything else is reconciled from git (GitOps: git is the change record).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cityforward-root
+  namespace: argocd
+spec:
+  project: cityforward
+  source:
+    repoURL: https://github.com/yashprogrammer/cityforward-health-capstone
+    targetRevision: integrated
+    path: deploy/argocd/apps
+    directory: {recurse: false}
+  destination: {server: https://kubernetes.default.svc, namespace: argocd}
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}

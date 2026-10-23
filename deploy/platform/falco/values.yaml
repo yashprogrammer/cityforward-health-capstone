@@ -1,0 +1,42 @@
+# Falco: runtime detection of things that should never happen in this namespace. Alerts go to stdout (scraped by the logging stack) and to Prometheus via falco-exporter.
+tty: true
+driver: {kind: modern_ebpf}
+falco:
+  json_output: true
+  log_level: info
+  priority: notice
+  rules_files: [/etc/falco/falco_rules.yaml, /etc/falco/rules.d]
+customRules:
+  cityforward-rules.yaml: |-
+    - macro: cityforward_ns
+      condition: k8s.ns.name = "cityforward"
+
+    - rule: Shell in a Copilot or MediTrack container
+      desc: A shell started inside an application container (these images have no reason to run one).
+      condition: spawned_process and container and cityforward_ns and proc.name in (sh, bash, ash, zsh, dash)
+      output: "Shell in application container (user=%user.name pod=%k8s.pod.name container=%container.name cmd=%proc.cmdline)"
+      priority: WARNING
+      tags: [hitrust, hipaa, shell]
+
+    - rule: Read of the AI service private key
+      desc: Something other than the Copilot process read the SMART Backend Services private key.
+      condition: open_read and container and cityforward_ns and fd.name startswith /keys/ and not proc.name in (python, python3, uvicorn)
+      output: "Private key file read by unexpected process (proc=%proc.name pod=%k8s.pod.name file=%fd.name)"
+      priority: CRITICAL
+      tags: [hitrust, secrets]
+
+    - rule: Unexpected outbound connection from Copilot
+      desc: The Copilot connected somewhere other than the EHR, the payer, the database or the model endpoint (a prompt-injection exfiltration attempt looks like this).
+      condition: >
+        outbound and container and cityforward_ns and k8s.pod.label.app.kubernetes.io/name = "copilot"
+        and not fd.sport in (443, 5432, 8001, 8003, 4318, 53)
+      output: "Copilot outbound connection to unexpected port (dest=%fd.sip:%fd.sport pod=%k8s.pod.name)"
+      priority: WARNING
+      tags: [hipaa, exfiltration]
+
+    - rule: Write below the read-only application directory
+      desc: A write under /app (the root filesystem is read-only, so this means tampering or a bypass).
+      condition: open_write and container and cityforward_ns and fd.name startswith /app/
+      output: "Write under /app (proc=%proc.name file=%fd.name pod=%k8s.pod.name)"
+      priority: ERROR
+      tags: [integrity]

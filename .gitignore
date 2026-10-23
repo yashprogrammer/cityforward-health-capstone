@@ -15,3 +15,4 @@ ai/data/
 *.tfstate.backup
 .azure/
 .data/
+linkerd-certs/

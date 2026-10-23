@@ -1,0 +1,59 @@
+{{- if .Values.keyVault.enabled }}
+{{- /* Secrets live in Key Vault. The CSI driver syncs them into the Kubernetes Secrets the workloads reference; it only does so while a pod mounts the volume, hence the tiny sync pod. */ -}}
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: cityforward-keyvault
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    clientID: {{ .Values.keyVault.workloadIdentityClientId | quote }}
+    keyvaultName: {{ .Values.keyVault.name | quote }}
+    tenantId: {{ .Values.keyVault.tenantId | quote }}
+    objects: |
+      array:
+        {{- range .Values.keyVault.objects }}
+        - |
+          objectName: {{ .name }}
+          objectType: secret
+        {{- end }}
+  secretObjects:
+    {{- range $secret, $items := (include "cf.kvSecrets" . | fromYaml) }}
+    - secretName: {{ $secret }}
+      type: Opaque
+      data:
+        {{- range $items }}
+        - {objectName: {{ .name }}, key: {{ .key }}}
+        {{- end }}
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secrets-sync
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "cf.selector" (dict "name" "secrets-sync" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cf.selector" (dict "name" "secrets-sync" "root" .) | nindent 8 }}
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: copilot
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources: {requests: {cpu: 5m, memory: 8Mi}, limits: {cpu: 50m, memory: 16Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          volumeMounts: [{name: kv, mountPath: /mnt/secrets, readOnly: true}]
+      volumes:
+        - name: kv
+          csi: {driver: secrets-store.csi.k8s.io, readOnly: true, volumeAttributes: {secretProviderClass: cityforward-keyvault}}
+{{- end }}

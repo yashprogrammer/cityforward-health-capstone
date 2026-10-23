@@ -1,0 +1,27 @@
+# Versions are ranges on purpose: pin exact chart versions after the first successful sync.
+# The authoring sandbox could not reach the chart repositories, so these charts are UNVERIFIED against the live registries.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: linkerd-crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: cityforward
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: linkerd
+  source:
+    repoURL: https://helm.linkerd.io/edge
+    chart: linkerd-crds
+    targetRevision: 2025.*
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

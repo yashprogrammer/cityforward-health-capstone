@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-smoke
+  labels: {{- include "cf.labels" . | nindent 4 }}
+  annotations: {helm.sh/hook: test, helm.sh/hook-delete-policy: "before-hook-creation,hook-succeeded"}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext: {{- include "cf.podSecurity" . | nindent 4 }}
+  containers:
+    - name: smoke
+      image: {{ include "cf.image" .Values.images.ai }}
+      imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+      command: ["python", "-c"]
+      args:
+        - |
+          import httpx, sys
+          for url in ("http://copilot:8080/healthz", "http://meditrack:8001/int/healthz", "http://payer:8003/healthz"):
+              r = httpx.get(url, timeout=5); print(url, r.status_code, r.text[:80]); r.raise_for_status()
+          r = httpx.get("http://meditrack:8001/fhir/metadata", timeout=5); print("fhir metadata", r.status_code); r.raise_for_status()
+      resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 128Mi}}
+      securityContext: {{- include "cf.containerSecurity" . | nindent 8 }}

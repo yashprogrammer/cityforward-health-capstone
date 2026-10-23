@@ -1,0 +1,38 @@
+# Demo-grade Keycloak (dev-mode H2 database, one replica) so the SSO path can be exercised on a laptop or a demo cluster.
+# PRODUCTION: use the hospital's own identity provider (Entra ID / Okta / Ping) and trust it by setting KEYCLOAK_ISSUER on the Copilot to that issuer;
+# or run Keycloak HA on PostgreSQL with the Keycloak operator. The role and claim mapping in the realm file is the contract either way.
+apiVersion: v1
+kind: Service
+metadata: {name: keycloak, namespace: identity}
+spec:
+  selector: {app.kubernetes.io/name: keycloak}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: keycloak, namespace: identity, labels: {app.kubernetes.io/part-of: cityforward-identity}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: keycloak}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: keycloak}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.0
+          args: ["start-dev", "--import-realm", "--http-enabled=true", "--proxy-headers=xforwarded"]
+          env:
+            - {name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin}
+            - {name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: keycloak-admin, key: password}}}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /realms/cityforward, port: http}, periodSeconds: 10, initialDelaySeconds: 20}
+          resources: {requests: {cpu: 200m, memory: 512Mi}, limits: {memory: 1Gi}}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+          volumeMounts:
+            - {name: realm, mountPath: /opt/keycloak/data/import, readOnly: true}
+            - {name: data, mountPath: /opt/keycloak/data/h2}
+      volumes:
+        - {name: realm, configMap: {name: cityforward-realm}}
+        - {name: data, emptyDir: {}}

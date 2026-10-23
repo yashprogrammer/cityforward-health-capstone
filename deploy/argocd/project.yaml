@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: cityforward
+  namespace: argocd
+spec:
+  description: CityForward Health platform and applications
+  sourceRepos:
+    - https://github.com/yashprogrammer/cityforward-health-capstone
+    - https://kubernetes.github.io/ingress-nginx
+    - https://kyverno.github.io/kyverno
+    - https://falcosecurity.github.io/charts
+    - https://prometheus-community.github.io/helm-charts
+    - https://open-telemetry.github.io/opentelemetry-helm-charts
+    - https://jaegertracing.github.io/helm-charts
+    - https://helm.linkerd.io/edge
+  destinations:
+    - {server: https://kubernetes.default.svc, namespace: cityforward}
+    - {server: https://kubernetes.default.svc, namespace: ingress-nginx}
+    - {server: https://kubernetes.default.svc, namespace: kyverno}
+    - {server: https://kubernetes.default.svc, namespace: falco}
+    - {server: https://kubernetes.default.svc, namespace: monitoring}
+    - {server: https://kubernetes.default.svc, namespace: observability}
+    - {server: https://kubernetes.default.svc, namespace: identity}
+    - {server: https://kubernetes.default.svc, namespace: linkerd}
+  clusterResourceWhitelist:
+    - {group: "*", kind: "*"}          # platform charts install CRDs and cluster roles; the application chart (namespaced) is what the vendor controls
+  orphanedResources: {warn: true}

@@ -1,0 +1,14 @@
+# kind on a laptop: images are loaded with `kind load docker-image`, one replica each, offline AI unless you create the llm secret.
+images:
+  customer: {repository: cityforward-customer, tag: dev}
+  ai: {repository: cityforward-ai, tag: dev}
+copilot:
+  replicas: 1
+  hpa: {enabled: false}
+  llm: {provider: offline}
+meditrack:
+  publicBaseUrl: http://localhost:8081
+ingress:
+  host: ""
+networkPolicy:
+  enabled: false        # kindnet does not enforce NetworkPolicy; turn on when the cluster uses Calico or Cilium

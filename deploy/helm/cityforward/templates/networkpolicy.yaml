@@ -1,0 +1,91 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /* default deny, then exactly the conversations the architecture needs. (kindnet ignores NetworkPolicy; AKS with Azure CNI + Cilium/Azure NPM enforces it.) */ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/part-of: cityforward}}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}}]
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-to-apps
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  podSelector: {matchExpressions: [{key: app.kubernetes.io/name, operator: In, values: [meditrack, copilot]}]}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}}}}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: copilot-talks-to
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: copilot}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: meditrack}}}]
+      ports: [{port: 8001}]
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: payer}}}]
+      ports: [{port: 8003}]
+    {{- if .Values.postgres.enabled }}
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: postgres}}}]
+      ports: [{port: 5432}]
+    {{- end }}
+    - to: {{- range .Values.networkPolicy.llmEgressCidrs }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+      ports: [{port: 443}, {port: 5432}]     # the model endpoint, and the managed PostgreSQL private endpoint
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: meditrack-talks-to
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  podSelector: {matchExpressions: [{key: app.kubernetes.io/name, operator: In, values: [meditrack, meditrack-seed]}]}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: copilot}}}]      # webhooks
+      ports: [{port: 8080}]
+    {{- if .Values.postgres.enabled }}
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: postgres}}}]
+      ports: [{port: 5432}]
+    {{- else }}
+    - to: [{ipBlock: {cidr: 10.0.0.0/8}}]
+      ports: [{port: 5432}]
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-accept-from-peers
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  podSelector: {matchExpressions: [{key: app.kubernetes.io/name, operator: In, values: [meditrack, payer, copilot, postgres]}]}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: copilot}}}]
+      ports: [{port: 8001}, {port: 8003}, {port: 5432}]
+    - from: [{podSelector: {matchExpressions: [{key: app.kubernetes.io/name, operator: In, values: [meditrack, meditrack-seed]}]}}]
+      ports: [{port: 8080}, {port: 5432}]
+    - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}}}}]
+      ports: [{port: {{ .Values.copilot.metricsPort }}}]
+{{- end }}

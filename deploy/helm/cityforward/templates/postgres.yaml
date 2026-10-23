@@ -1,0 +1,82 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-initdb
+  labels: {{- include "cf.labels" . | nindent 4 }}
+data:
+  01-databases.sh: |
+    #!/bin/sh
+    set -e
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<SQL
+    CREATE ROLE meditrack LOGIN PASSWORD '$MEDITRACK_PASSWORD';
+    CREATE DATABASE meditrack OWNER meditrack;
+    CREATE ROLE copilot LOGIN PASSWORD '$COPILOT_PASSWORD';
+    CREATE DATABASE copilot OWNER copilot;
+    SQL
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname copilot -c "CREATE EXTENSION IF NOT EXISTS vector"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "cf.selector" (dict "name" "postgres" "root" .) | nindent 4 }}
+  ports: [{name: pg, port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {{- include "cf.selector" (dict "name" "postgres" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "cf.selector" (dict "name" "postgres" "root" .) | nindent 8 }}
+    spec:
+      serviceAccountName: postgres
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: {{ include "cf.image" .Values.images.postgres }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports: [{name: pg, containerPort: 5432}]
+          env:
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.secretName }}, key: postgres-password}}}
+            - {name: MEDITRACK_PASSWORD, valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.secretName }}, key: meditrack-password}}}
+            - {name: COPILOT_PASSWORD, valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.secretName }}, key: copilot-password}}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          readinessProbe: {exec: {command: ["pg_isready", "-U", "postgres"]}, periodSeconds: 5}
+          livenessProbe: {exec: {command: ["pg_isready", "-U", "postgres"]}, periodSeconds: 20, failureThreshold: 6}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 1Gi}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: initdb, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+            - {name: run, mountPath: /var/run/postgresql}
+      volumes:
+        - {name: initdb, configMap: {name: postgres-initdb, defaultMode: 0555}}
+        - {name: run, emptyDir: {}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.postgres.storageClass }}
+        storageClassName: {{ .Values.postgres.storageClass }}
+        {{- end }}
+        resources: {requests: {storage: {{ .Values.postgres.storage }}}}
+{{- end }}

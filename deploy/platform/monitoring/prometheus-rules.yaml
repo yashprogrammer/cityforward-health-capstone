@@ -1,0 +1,53 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: copilot
+  namespace: monitoring
+  labels: {release: monitoring}
+spec:
+  groups:
+    - name: copilot-safety
+      rules:
+        - alert: AuditLogWriteFailing
+          expr: increase(copilot_audit_failures_total[5m]) > 0
+          labels: {severity: critical, hitrust: "09.aa"}
+          annotations: {summary: "The audit log could not be written", description: "Access is happening that is not being recorded. Page the on-call; consider failing closed. Runbook: docs/compliance/incident-response-plan.md section 4."}
+        - alert: BreakGlassUsed
+          expr: increase(copilot_access_total{outcome="break_glass"}[15m]) > 0
+          labels: {severity: info}
+          annotations: {summary: "Break-the-glass access was used", description: "Review in the privacy officer queue within one business day."}
+        - alert: UnusualAccessDenials
+          expr: sum(increase(copilot_access_total{outcome="denied"}[10m])) > 25
+          labels: {severity: warning}
+          annotations: {summary: "Many access denials in 10 minutes", description: "Possible credential misuse or a broken role mapping."}
+        - alert: EventDeadLetters
+          expr: increase(copilot_events_total{status="DEAD"}[30m]) > 0
+          labels: {severity: warning}
+          annotations: {summary: "EHR events were dead-lettered", description: "Discharge preparation did not run for these events. Replay from the events admin page."}
+    - name: copilot-quality-and-cost
+      rules:
+        - alert: HighFallbackRate
+          expr: sum(rate(copilot_fallback_total[30m])) / clamp_min(sum(rate(copilot_access_total{action=~"ask|summary",outcome="allowed"}[30m])), 0.001) > 0.3
+          for: 30m
+          labels: {severity: warning}
+          annotations: {summary: "More than 30% of AI answers fell back to plain passages", description: "The model is failing the grounding checks or is unreachable. Clinicians are getting the no-AI experience."}
+        - alert: ModelLatencyHigh
+          expr: histogram_quantile(0.95, sum by (le, purpose) (rate(copilot_llm_latency_seconds_bucket[10m]))) > 8
+          for: 10m
+          labels: {severity: warning}
+          annotations: {summary: "p95 model latency above the 8 s budget ({{ $labels.purpose }})"}
+        - alert: ModelSpendAboveBudget
+          expr: sum(increase(copilot_llm_cost_usd_total[24h])) > 25
+          labels: {severity: warning}
+          annotations: {summary: "More than $25 of model spend in 24 hours", description: "Check for a loop or a prompt that grew; see docs/cost-latency.md."}
+        - alert: RedactionStoppedWorking
+          expr: sum(increase(copilot_llm_calls_total[1h])) > 20 and sum(increase(copilot_redactions_total[1h])) == 0
+          labels: {severity: critical, hipaa: "164.514"}
+          annotations: {summary: "Model calls are being made but nothing is being redacted", description: "Stop sending PHI to the model provider until the redactor is verified."}
+    - name: copilot-availability
+      rules:
+        - alert: CopilotDown
+          expr: absent(up{job=~".*copilot-metrics.*"} == 1)
+          for: 5m
+          labels: {severity: critical}
+          annotations: {summary: "No Copilot instance is reporting"}

@@ -6,7 +6,7 @@ coders code, IT sees no PHI.
 """
 from fastapi import HTTPException
 
-from . import audit, db
+from . import audit, db, telemetry
 from .auth import Principal
 
 CLINICAL = {"index", "ask", "summary", "priorauth.view", "priorauth.draft", "priorauth.edit", "priorauth.submit",
@@ -41,6 +41,7 @@ def authorize(p: Principal, action: str, patient_id: str | None = None, unit: st
     """Raise 403 unless `p` may perform `action` (on this patient). `unit` can be passed when the caller already has it (indexing);
     `about` names the patient for the audit trail when this is a role-only check made before the chart is fetched."""
     def deny(why: str, status: int = 403):
+        telemetry.ACCESS.labels(action, "denied").inc()
         audit.log(p, action, patient_id or about, "denied", {"why": why})
         raise HTTPException(status, why)
 
@@ -60,6 +61,8 @@ def authorize(p: Principal, action: str, patient_id: str | None = None, unit: st
     if not p.can_see_unit(unit):
         if not has_break_glass(p.user, patient_id):
             deny("patient is on a unit outside your assignment (break-glass access requires a documented reason)")
+        telemetry.ACCESS.labels(action, "break_glass").inc()
         audit.log(p, action, patient_id, detail={"break_glass": True})      # allowed, and flagged for the privacy officer's review
         return
+    telemetry.ACCESS.labels(action, "allowed").inc()
     audit.log(p, action, patient_id)
