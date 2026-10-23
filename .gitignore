@@ -3,8 +3,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
-node_modules/
-dist/
+node_modules
+dist
 .DS_Store
 # runtime state
 customer/meditrack/data/
@@ -14,3 +14,4 @@ ai/data/
 *.tfstate
 *.tfstate.backup
 .azure/
+.data/
