@@ -1,0 +1,13 @@
+# MediTrack (the customer's legacy EHR) + interoperability layer + mock payer
+fastapi==0.118.*
+uvicorn[standard]
+python-multipart
+fpdf2
+psycopg[binary,pool]
+httpx
+pyjwt[crypto]
+cryptography
+
+# tests
+pytest
+simple-icd-10-cm
