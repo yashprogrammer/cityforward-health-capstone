@@ -14,22 +14,27 @@ CLINICAL = {"index", "ask", "summary", "priorauth.view", "priorauth.draft", "pri
 SIGNERS = {"priorauth.attest", "priorauth.approve", "coding.decide"}
 
 ROLE_ACTIONS: dict[str, set[str]] = {
-    "ATTENDING": CLINICAL | SIGNERS,
-    "RESIDENT": CLINICAL | {"priorauth.attest"},          # residents draft and attest facts; the attending signs the request
-    "NURSE": {"index", "ask", "summary", "priorauth.view", "coding.view"},
+    "ATTENDING": CLINICAL | SIGNERS | {"breakglass"},
+    "RESIDENT": CLINICAL | {"priorauth.attest", "breakglass"},          # residents draft and attest facts; the attending signs the request
+    "NURSE": {"index", "ask", "summary", "priorauth.view", "coding.view", "breakglass"},
     "PA_COORD": {"index", "ask", "summary", "priorauth.view", "priorauth.draft", "priorauth.edit", "priorauth.submit"},
     "HIM_CODER": {"index", "ask", "summary", "coding.view", "coding.suggest", "coding.decide"},
-    "IT_ADMIN": {"audit.view"},                              # operates the platform and reviews access logs; sees no clinical content
-    "COMPLIANCE": {"audit.view"},                            # privacy officer (a Keycloak-issued role)
+    "IT_ADMIN": {"audit.view", "breakglass.review"},         # operates the platform and reviews access logs; sees no clinical content
+    "COMPLIANCE": {"audit.view", "breakglass.review"},       # privacy officer (a Keycloak-issued role)
     "SERVICE": {"index"},                                    # the webhook worker
 }
 
 
 def patient_unit(patient_id: str) -> tuple[bool, str | None]:
     """(is_indexed, unit). Read as the table owner on purpose: this lookup is how we decide what the caller may see."""
-    with db.session() as c:
+    with db.system() as c:
         r = c.execute("SELECT unit FROM patient_index WHERE patient_id=%s", (patient_id,)).fetchone()
     return (r is not None), (r["unit"] if r else None)
+
+
+def has_break_glass(user: str, patient_id: str) -> bool:
+    with db.system() as c:
+        return c.execute("SELECT 1 FROM break_glass WHERE user_id=%s AND patient_id=%s AND expires_at > now()", (user, patient_id)).fetchone() is not None
 
 
 def authorize(p: Principal, action: str, patient_id: str | None = None, unit: str | None = None, about: str | None = None) -> None:
@@ -53,5 +58,8 @@ def authorize(p: Principal, action: str, patient_id: str | None = None, unit: st
         if not indexed:
             raise HTTPException(409, "patient is not indexed yet; open the patient through the EHR launch or call /api/patients/{id}/index")
     if not p.can_see_unit(unit):
-        deny("patient is on a unit outside your assignment")
+        if not has_break_glass(p.user, patient_id):
+            deny("patient is on a unit outside your assignment (break-glass access requires a documented reason)")
+        audit.log(p, action, patient_id, detail={"break_glass": True})      # allowed, and flagged for the privacy officer's review
+        return
     audit.log(p, action, patient_id)

@@ -21,7 +21,7 @@ def _rt():
 
 
 def _row(wid: str) -> dict:
-    with db.session() as c:
+    with db.system() as c:          # authorization happens explicitly right after (so a denial is audited, not a silent 404)
         r = c.execute("SELECT * FROM coding_worksheet WHERE id=%s", (wid,)).fetchone()
     if not r:
         raise HTTPException(404, "no such worksheet")
@@ -35,7 +35,7 @@ def _view(r: dict) -> dict:
 
 def _save(r: dict, **ch) -> dict:
     r = {**r, **ch}
-    with db.session() as c:
+    with db.system() as c:
         c.execute("UPDATE coding_worksheet SET status=%s, items=%s, finalized_by=%s, finalized_at=%s, history=%s WHERE id=%s",
                   (r["status"], json.dumps(r["items"]), r["finalized_by"], r["finalized_at"], json.dumps(r["history"]), r["id"]))
     return r
@@ -51,7 +51,7 @@ def create(patient_id: str, p: Principal = CurrentUser):
     w = coding.build_worksheet(rt.get_gateway(), chart, principal=p)
     wid = "CW-" + uuid.uuid4().hex[:10].upper()
     hist = [{"at": now_iso(), "by": p.user, "what": f"worksheet created ({w.mode}{', ' + w.model if w.model else ''}); {len(w.items)} line(s), {len(w.queries)} documentation query(ies)"}]
-    with db.session() as c:
+    with db.session(p) as c:        # row-level security checks the new row against the caller's units
         c.execute("""INSERT INTO coding_worksheet (id, patient_id, encounter_id, unit, status, items, queries, mode, model, problems, created_by, history)
                      VALUES (%s,%s,%s,%s,'OPEN',%s,%s,%s,%s,%s,%s,%s)""",
                   (wid, patient_id, w.encounter_id, w.unit, json.dumps([i.model_dump() for i in w.items]), json.dumps(w.queries), w.mode, w.model,
@@ -62,7 +62,7 @@ def create(patient_id: str, p: Principal = CurrentUser):
 @router.get("/patients/{patient_id}/coding")
 def list_for_patient(patient_id: str, p: Principal = CurrentUser):
     authorize(p, "coding.view", patient_id)
-    with db.session() as c:
+    with db.session(p) as c:
         return [_view(r) for r in c.execute("SELECT * FROM coding_worksheet WHERE patient_id=%s ORDER BY created_at DESC", (patient_id,)).fetchall()]
 
 

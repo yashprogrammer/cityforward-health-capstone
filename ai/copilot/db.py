@@ -35,12 +35,19 @@ def init_schema() -> None:
 
 @contextmanager
 def session(principal=None):
-    """A transaction. `app.*` settings tell row-level-security policies who is asking (set per transaction, never leaked to the next one)."""
+    """A transaction. `app.*` settings tell row-level-security policies who is asking (set per transaction, never leaked to the next one).
+    With no principal the settings stay empty and every policy denies: forgetting to say who is asking returns nothing, never everything."""
     with pool().connection() as c:
         if principal is not None:
             c.execute("SELECT set_config('app.user', %s, true), set_config('app.role', %s, true), set_config('app.units', %s, true), set_config('app.patients', %s, true)",
                       (principal.user, principal.role, ",".join(principal.units), ",".join(principal.patients)))
         yield c
+
+
+def system():
+    """The platform itself (indexing worker, authorization lookups). Never use this for anything driven directly by a user's request data."""
+    from .auth import SYSTEM
+    return session(SYSTEM)
 
 
 def vec(v: list[float]) -> str:

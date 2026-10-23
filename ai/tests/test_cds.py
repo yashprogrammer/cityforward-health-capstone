@@ -5,6 +5,7 @@ from copilot import cds, rag, summary
 from copilot.app import rt as runtime
 from copilot.chart import load_chart
 from copilot.gateway import Gateway
+from copilot.auth import SYSTEM
 from tests.conftest import ScriptedLLM, bearer, user_token
 
 HALE = "IP2610-0142"
@@ -50,10 +51,10 @@ def test_a_directive_in_a_summary_is_revised_away(hale):
 
 def test_a_risk_prediction_in_an_answer_never_survives(hale):
     pid, chart = hale
-    hits = rag.search(pid, "troponin", k=8)
+    hits = rag.search(pid, "troponin", k=8, principal=SYSTEM)
     cid = next(f"C{i + 1}" for i, h in enumerate(hits) if "Troponin" in h.text)
     risky = {"answer": "Troponin 3100 ng/L; there is a 40% risk of heart failure.", "citations": [cid], "insufficient_evidence": False}
-    res = ask_mod.ask(Gateway(ScriptedLLM(risky, risky)), pid, "troponin")
+    res = ask_mod.ask(Gateway(ScriptedLLM(risky, risky)), pid, "troponin", principal=SYSTEM)
     assert res.mode == "extractive" and any("risk probability" in p for p in res.problems)
 
 

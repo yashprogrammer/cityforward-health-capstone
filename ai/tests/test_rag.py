@@ -8,6 +8,7 @@ from copilot.embeddings import HashEmbedder
 from copilot.fhir_client import FhirClient, FhirError
 from copilot.gateway import Gateway
 from copilot.llm import LLMError
+from copilot.auth import SYSTEM
 from tests.conftest import ScriptedLLM, bearer, user_token
 
 HALE_ENC = "IP2610-0142"
@@ -68,7 +69,7 @@ def test_indexing_is_idempotent_and_replaces_changed_text(rt, clean_db, hale):
 ])
 def test_hybrid_retrieval_finds_the_right_passage(rt, clean_db, hale, question, expect):
     rag.index_chart(load_chart(rt.fhir, hale))
-    hits = rag.search(hale, question, k=5)
+    hits = rag.search(hale, question, k=5, principal=SYSTEM)
     assert any(expect.lower() in h.text.lower() for h in hits), [h.text[:60] for h in hits]
 
 
@@ -77,8 +78,8 @@ def test_retrieval_is_hard_scoped_to_one_patient(rt, clean_db, hale):
     assert other != hale
     rag.index_chart(load_chart(rt.fhir, hale))
     rag.index_chart(load_chart(rt.fhir, other))
-    assert all(h.source_ref for h in rag.search(hale, "hip fracture hemiarthroplasty walker", k=20))
-    assert not any("hemiarthroplasty" in h.text.lower() for h in rag.search(hale, "hip fracture hemiarthroplasty walker", k=20))
+    assert all(h.source_ref for h in rag.search(hale, "hip fracture hemiarthroplasty walker", k=20, principal=SYSTEM))
+    assert not any("hemiarthroplasty" in h.text.lower() for h in rag.search(hale, "hip fracture hemiarthroplasty walker", k=20, principal=SYSTEM))
 
 
 def _gw(*replies):
@@ -88,10 +89,10 @@ def _gw(*replies):
 
 def test_ask_cited_answer_passes_grounding(rt, clean_db, hale):
     rag.index_chart(load_chart(rt.fhir, hale))
-    hits = rag.search(hale, "lipoprotein(a) pending", k=ask_mod.K)
+    hits = rag.search(hale, "lipoprotein(a) pending", k=ask_mod.K, principal=SYSTEM)
     cid = next(f"C{i + 1}" for i, h in enumerate(hits) if "NO RESULT YET" in h.text)
     gw, llm = _gw({"answer": "The Lp(a) result is still pending.", "citations": [cid], "insufficient_evidence": False})
-    res = ask_mod.ask(gw, hale, "lipoprotein(a) pending")
+    res = ask_mod.ask(gw, hale, "lipoprotein(a) pending", principal=SYSTEM)
     assert res.mode == "llm" and res.citations and "NO RESULT YET" in res.citations[0].text
     assert "PASSAGES" in llm.prompts[0][1]
 
@@ -99,19 +100,19 @@ def test_ask_cited_answer_passes_grounding(rt, clean_db, hale):
 def test_ask_wrong_number_is_revised_then_extractive(rt, clean_db, hale):
     rag.index_chart(load_chart(rt.fhir, hale))
     bad = {"answer": "Troponin peaked at 99999 ng/L.", "citations": ["C1"], "insufficient_evidence": False}
-    res = ask_mod.ask(*_gw(bad, bad)[:1], hale, "troponin trend")
+    res = ask_mod.ask(*_gw(bad, bad)[:1], hale, "troponin trend", principal=SYSTEM)
     assert res.mode == "extractive" and res.problems and res.citations
 
 
 def test_ask_honest_insufficient_evidence_is_accepted(rt, clean_db, hale):
     rag.index_chart(load_chart(rt.fhir, hale))
-    res = ask_mod.ask(_gw({"answer": "The chart does not say.", "citations": [], "insufficient_evidence": True})[0], hale, "Does he have a penicillin allergy?")
+    res = ask_mod.ask(_gw({"answer": "The chart does not say.", "citations": [], "insufficient_evidence": True})[0], hale, "Does he have a penicillin allergy?", principal=SYSTEM)
     assert res.mode == "llm" and res.insufficient_evidence
 
 
 def test_ask_model_outage_degrades_to_passages(rt, clean_db, hale):
     rag.index_chart(load_chart(rt.fhir, hale))
-    res = ask_mod.ask(_gw(LLMError("503"))[0], hale, "aspirin dose")
+    res = ask_mod.ask(_gw(LLMError("503"))[0], hale, "aspirin dose", principal=SYSTEM)
     assert res.mode == "extractive" and "unavailable" in res.note
 
 
@@ -134,7 +135,7 @@ def test_api_requires_a_valid_token_and_enforces_unit_and_patient(rt, clean_db, 
 def test_llm_calls_are_metered_without_storing_prompts(rt, clean_db, hale):
     from copilot import db
     rag.index_chart(load_chart(rt.fhir, hale))
-    ask_mod.ask(_gw({"answer": "x", "citations": [], "insufficient_evidence": True})[0], hale, "anything")
+    ask_mod.ask(_gw({"answer": "x", "citations": [], "insufficient_evidence": True})[0], hale, "anything", principal=SYSTEM)
     with db.session() as c:
         row = c.execute("SELECT * FROM llm_call").fetchone()
     assert row["purpose"] == "ask" and row["tokens_in"] > 0 and row["status"] == "ok" and "text" not in row and "prompt" not in row

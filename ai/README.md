@@ -52,3 +52,11 @@ principal diagnosis; finalizing files a worksheet PDF into the chart. SNOMED CT 
   `tests/test_redact.py` runs the real summary pipeline for **every patient in the hospital** with a spy model and scans every byte it received for that patient's identifiers.
 * `audit.py`: append-only, hash-chained `audit_log` (database triggers refuse UPDATE/DELETE/TRUNCATE; `GET /api/audit/verify` recomputes the chain). Every allowed and denied access, every AI call
   (purpose, model, tokens, number of redactions) and every human decision (attest, approve, submit, code) is recorded with IDs only, never clinical text or prompts.
+
+## Access control (RBAC + row-level security + break-the-glass)
+
+Three layers, so one mistake is not a breach: (1) `access.py` role matrix (who may do what; coordinators prepare, only clinicians attest/sign, IT sees no PHI),
+(2) the patient/unit check from the signed SMART token, (3) **Postgres row-level security** (`schema_rls.sql`): the database itself hides other units' rows from a clinician, hides charts from
+IT/compliance roles entirely, limits a SMART-launched session to its one patient, and returns nothing when nobody says who is asking (fail closed).
+**Break-the-glass** (`breakglass.py`): a clinician outside their unit states a reason and gets 4 hours of access immediately; it is audited and queued for the privacy officer.
+Tokens: MediTrack's SMART tokens always; Keycloak SSO tokens when `KEYCLOAK_ISSUER` is set (`platform/keycloak`).

@@ -7,7 +7,7 @@ import hashlib
 from dataclasses import dataclass
 
 from .chart import Chart
-from .db import session, vec
+from .db import session, system, vec
 from .embeddings import get_embedder
 
 RRF_K = 60
@@ -25,7 +25,8 @@ class Hit:
 
 
 def index_chart(chart: Chart, principal=None) -> dict:
-    """(Re)index one patient. Idempotent: unchanged text keeps its row, changed or removed text is replaced."""
+    """(Re)index one patient. Idempotent: unchanged text keeps its row, changed or removed text is replaced.
+    With no principal this is the platform indexing (webhook worker, CLI); row-level security still applies to a user principal."""
     facts = chart.facts()
     emb = get_embedder()
     keep: set[tuple[str, str]] = set()
@@ -36,7 +37,7 @@ def index_chart(chart: Chart, principal=None) -> dict:
             continue
         keep.add((f.ref, h))
         rows.append((f, h))
-    with session(principal) as c:
+    with (session(principal) if principal is not None else system()) as c:
         have = {(r["source_ref"], r["content_hash"]) for r in c.execute("SELECT source_ref, content_hash FROM chunk WHERE patient_id=%s", (chart.patient_id,))}
         new = [(f, h) for f, h in rows if (f.ref, h) not in have]
         vectors = emb.embed([f.text for f, _ in new]) if new else []
@@ -89,6 +90,6 @@ _QUESTION_WORDS = frozenset("what when where which who why how does did was were
 def identity_of(patient_id: str):
     """Identity record stored at indexing time (used by the redactor when a call has no chart in hand)."""
     from .chart import Identity
-    with session() as c:
+    with system() as c:
         r = c.execute("SELECT identity FROM patient_index WHERE patient_id=%s", (patient_id,)).fetchone()
     return Identity(**r["identity"]) if r and r["identity"] else None

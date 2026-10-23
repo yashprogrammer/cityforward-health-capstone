@@ -17,6 +17,9 @@ class Settings(BaseModel):
     payer_base: str
     payer_api_key: str
     public_path: str               # URL prefix the gateway mounts us under
+    keycloak_issuer: str | None    # e.g. https://idp.hospital.example/realms/cityforward ; unset = only MediTrack SMART tokens are trusted
+    keycloak_internal: str | None  # in-cluster URL of the same realm, for fetching the JWKS
+    keycloak_audience: str | None
 
 
 @lru_cache
@@ -33,4 +36,5 @@ def settings() -> Settings:
         webhook_secret=os.getenv("AI_WEBHOOK_SECRET", "dev-webhook-secret"),
         payer_base=os.getenv("PAYER_BASE_URL", "http://localhost:8003").rstrip("/"),
         payer_api_key=os.getenv("PAYER_API_KEY", "demo-payer-key"),
-        public_path=os.getenv("AI_PUBLIC_PATH", "/ai"))
+        public_path=os.getenv("AI_PUBLIC_PATH", "/ai"), keycloak_issuer=os.getenv("KEYCLOAK_ISSUER"), keycloak_internal=os.getenv("KEYCLOAK_INTERNAL_URL"),
+        keycloak_audience=os.getenv("KEYCLOAK_AUDIENCE"))

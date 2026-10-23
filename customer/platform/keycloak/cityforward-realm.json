@@ -1,0 +1,338 @@
+{
+  "realm": "cityforward",
+  "enabled": true,
+  "displayName": "CityForward Health",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 900,
+  "ssoSessionMaxLifespan": 36000,
+  "passwordPolicy": "length(12) and notUsername",
+  "roles": {
+    "realm": [
+      {
+        "name": "ATTENDING",
+        "description": "CityForward Health role ATTENDING"
+      },
+      {
+        "name": "RESIDENT",
+        "description": "CityForward Health role RESIDENT"
+      },
+      {
+        "name": "NURSE",
+        "description": "CityForward Health role NURSE"
+      },
+      {
+        "name": "PA_COORD",
+        "description": "CityForward Health role PA_COORD"
+      },
+      {
+        "name": "HIM_CODER",
+        "description": "CityForward Health role HIM_CODER"
+      },
+      {
+        "name": "IT_ADMIN",
+        "description": "CityForward Health role IT_ADMIN"
+      },
+      {
+        "name": "COMPLIANCE",
+        "description": "CityForward Health role COMPLIANCE"
+      }
+    ]
+  },
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\": [{\"name\": \"username\", \"displayName\": \"${username}\", \"validations\": {\"length\": {\"min\": 3, \"max\": 255}}}, {\"name\": \"email\", \"displayName\": \"${email}\", \"required\": {\"roles\": [\"user\"]}, \"validations\": {\"email\": {}}}, {\"name\": \"firstName\", \"displayName\": \"${firstName}\", \"required\": {\"roles\": [\"user\"]}}, {\"name\": \"lastName\", \"displayName\": \"${lastName}\", \"required\": {\"roles\": [\"user\"]}}, {\"name\": \"units\", \"displayName\": \"Nursing units / wards\", \"multivalued\": true, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\"]}}], \"unmanagedAttributePolicy\": \"ENABLED\"}"
+          ]
+        }
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "dr.raman",
+      "enabled": true,
+      "email": "dr.raman@cityforward.example",
+      "emailVerified": true,
+      "firstName": "Priya",
+      "lastName": "Raman",
+      "attributes": {
+        "units": [
+          "4W-CARD"
+        ]
+      },
+      "realmRoles": [
+        "ATTENDING"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "dr.okafor",
+      "enabled": true,
+      "email": "dr.okafor@cityforward.example",
+      "emailVerified": true,
+      "firstName": "Michael",
+      "lastName": "Okafor",
+      "attributes": {
+        "units": [
+          "3E-MED"
+        ]
+      },
+      "realmRoles": [
+        "ATTENDING"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "dr.whitfield",
+      "enabled": true,
+      "email": "dr.whitfield@cityforward.example",
+      "emailVerified": true,
+      "firstName": "Laura",
+      "lastName": "Whitfield",
+      "attributes": {
+        "units": [
+          "5S-ORTH"
+        ]
+      },
+      "realmRoles": [
+        "ATTENDING"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "dr.tran",
+      "enabled": true,
+      "email": "dr.tran@cityforward.example",
+      "emailVerified": true,
+      "firstName": "Emily",
+      "lastName": "Tran",
+      "attributes": {
+        "units": [
+          "4W-CARD"
+        ]
+      },
+      "realmRoles": [
+        "RESIDENT"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "nurse.lopez",
+      "enabled": true,
+      "email": "nurse.lopez@cityforward.example",
+      "emailVerified": true,
+      "firstName": "Maria",
+      "lastName": "Lopez",
+      "attributes": {
+        "units": [
+          "4W-CARD"
+        ]
+      },
+      "realmRoles": [
+        "NURSE"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "nurse.park",
+      "enabled": true,
+      "email": "nurse.park@cityforward.example",
+      "emailVerified": true,
+      "firstName": "James",
+      "lastName": "Park",
+      "attributes": {
+        "units": [
+          "3E-MED"
+        ]
+      },
+      "realmRoles": [
+        "NURSE"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "pa.hughes",
+      "enabled": true,
+      "email": "pa.hughes@cityforward.example",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Hughes",
+      "attributes": {
+        "units": [
+          "ALL"
+        ]
+      },
+      "realmRoles": [
+        "PA_COORD"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "him.patel",
+      "enabled": true,
+      "email": "him.patel@cityforward.example",
+      "emailVerified": true,
+      "firstName": "Anita",
+      "lastName": "Patel",
+      "attributes": {
+        "units": [
+          "ALL"
+        ]
+      },
+      "realmRoles": [
+        "HIM_CODER"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "it.whitlock",
+      "enabled": true,
+      "email": "it.whitlock@cityforward.example",
+      "emailVerified": true,
+      "firstName": "Sam",
+      "lastName": "Whitlock",
+      "attributes": {
+        "units": [
+          "ALL"
+        ]
+      },
+      "realmRoles": [
+        "IT_ADMIN"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "privacy.nguyen",
+      "enabled": true,
+      "email": "privacy.nguyen@cityforward.example",
+      "emailVerified": true,
+      "firstName": "Linh",
+      "lastName": "Nguyen",
+      "attributes": {
+        "units": [
+          "ALL"
+        ]
+      },
+      "realmRoles": [
+        "COMPLIANCE"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password-12",
+          "temporary": false
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "cityforward-ai-dashboard",
+      "name": "CityForward AI clinical dashboard",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8001/ai/*",
+        "http://localhost:8080/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8001"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8001/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "units",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "units",
+            "claim.name": "units",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "ai-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "cityforward-ai",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ]
+}

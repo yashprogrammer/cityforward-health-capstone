@@ -71,6 +71,9 @@ services:
       PAYER_API_KEY: ${PAYER_API_KEY:-demo-payer-key}
       AI_BACKEND_KEY_FILE: /keys/ai-backend.pem
       AI_WEBHOOK_SECRET: ${AI_WEBHOOK_SECRET:-dev-webhook-secret}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-}
+      KEYCLOAK_INTERNAL_URL: ${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080/realms/cityforward}
+      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-cityforward-ai}
       EMBEDDER: ${EMBEDDER:-hash}
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}

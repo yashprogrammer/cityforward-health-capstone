@@ -32,7 +32,7 @@ def _rt():
 
 
 def _row(pa_id: str) -> dict:
-    with db.session() as c:
+    with db.system() as c:          # authorization happens explicitly right after (so a denial is audited, not a silent 404)
         r = c.execute("SELECT * FROM prior_auth WHERE id=%s", (pa_id,)).fetchone()
     if not r:
         raise HTTPException(404, "no such prior authorization")
@@ -57,7 +57,7 @@ def _event(r: dict, who: str, what: str) -> list:
 
 def _save(r: dict, **changes) -> dict:
     r = {**r, **changes}
-    with db.session() as c:
+    with db.system() as c:
         c.execute("""UPDATE prior_auth SET status=%s, requirements=%s, letter=%s, approved_by=%s, approved_at=%s, submitted_by=%s, submitted_at=%s,
                      claim_identifier=%s, payer_ref=%s, payer_action=%s, payer_notes=%s, preauth_ref=%s, history=%s WHERE id=%s""",
                   (r["status"], json.dumps(r["requirements"]), r["letter"], r["approved_by"], r["approved_at"], r["submitted_by"], r["submitted_at"],
@@ -104,7 +104,7 @@ def create_draft(patient_id: str, body: DraftIn, p: Principal = CurrentUser):
     pa_id = "PA-" + uuid.uuid4().hex[:10].upper()
     status = "DRAFT"
     hist = [{"at": priorauth.now_iso(), "by": p.user, "what": f"draft created ({d.mode}{', ' + d.model if d.model else ''}); {len(d.gaps)} open requirement(s)"}]
-    with db.session() as c:
+    with db.session(p) as c:        # row-level security checks the new row against the caller's units
         c.execute("""INSERT INTO prior_auth (id, patient_id, encounter_id, unit, service_code, service_name, plan, status, requirements, diagnoses, letter, mode, model,
                      problems, created_by, history) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                   (pa_id, patient_id, d.encounter_id, d.unit, d.service_code, d.service_name, d.plan, status,
@@ -116,7 +116,7 @@ def create_draft(patient_id: str, body: DraftIn, p: Principal = CurrentUser):
 @router.get("/patients/{patient_id}/prior-auth")
 def list_for_patient(patient_id: str, p: Principal = CurrentUser):
     authorize(p, "priorauth.view", patient_id)
-    with db.session() as c:
+    with db.session(p) as c:
         return [_view(r) for r in c.execute("SELECT * FROM prior_auth WHERE patient_id=%s ORDER BY created_at DESC", (patient_id,)).fetchall()]
 
 
