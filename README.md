@@ -10,11 +10,13 @@ a hospital-style security review → executive readout and handoff.
 
 | Branch | What it contains | Course sessions |
 |---|---|---|
-| `main` | Course materials only | Discovery, mock call, debrief, scoping the wedge, readout, handoff, interview |
+| `main` | Course materials only (`course/`, `docs/`) | Discovery, mock call, debrief, scoping the wedge, readout, handoff, interview, assignment |
 | `legacy` | + **the customer's world**: MediTrack EHR (FHIR R4 API, SMART on FHIR, webhooks), mock payer, the hospital's Kubernetes platform | Explained by the instructor; you study it like an FDE on day one |
 | `poc` | + the LangGraph patient-history summarizer POC | Build Session 1, presenting the POC |
 | `integrated` | + the production AI layer, compliance controls, deployment (one git tag per build session) | Build Sessions 2–6 onwards |
 
 ## Start here
 
+- [`course/README.md`](course/README.md): the lecture map: every lecture in the sheet, its material and its code.
 - [`docs/decisions.md`](docs/decisions.md): the decision record and build plan for the whole capstone.
+- [`docs/FINAL_REVIEW.md`](docs/FINAL_REVIEW.md): what was built, what was verified and what was not, and the decisions made along the way.
