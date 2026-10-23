@@ -193,7 +193,21 @@ resource "azurerm_postgresql_flexible_server" "main" {
 resource "azurerm_postgresql_flexible_server_configuration" "extensions" {
   name      = "azure.extensions"
   server_id = azurerm_postgresql_flexible_server.main.id
-  value     = "VECTOR"
+  value     = "VECTOR,PGAUDIT"
+}
+
+# pgAudit: database-level audit of reads, writes and DDL, independent of the application's own audit log (HITRUST 09.aa). Needs a server restart to load.
+resource "azurerm_postgresql_flexible_server_configuration" "pgaudit_preload" {
+  name      = "shared_preload_libraries"
+  server_id = azurerm_postgresql_flexible_server.main.id
+  value     = "pgaudit"
+}
+
+resource "azurerm_postgresql_flexible_server_configuration" "pgaudit_log" {
+  name       = "pgaudit.log"
+  server_id  = azurerm_postgresql_flexible_server.main.id
+  value      = "read,write,ddl,role"
+  depends_on = [azurerm_postgresql_flexible_server_configuration.pgaudit_preload]
 }
 
 resource "azurerm_postgresql_flexible_server_configuration" "require_tls" {

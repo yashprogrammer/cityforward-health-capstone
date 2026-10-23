@@ -8,3 +8,4 @@ ALTER DATABASE meditrack OWNER TO meditrack;
 ALTER DATABASE copilot OWNER TO copilot;
 \connect copilot
 CREATE EXTENSION IF NOT EXISTS vector;      -- allow-listed by azure.extensions=VECTOR in main.tf; the application role is NOT a superuser, so row-level security applies to it
+CREATE EXTENSION IF NOT EXISTS pgaudit;     -- statement-level audit (pgaudit.log is set server-wide in main.tf); logs flow to Log Analytics via the PostgreSQL diagnostic setting

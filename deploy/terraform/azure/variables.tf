@@ -7,7 +7,7 @@ variable "name" {
 variable "location" {
   description = "Azure region. Pick the region your data-residency policy allows."
   type        = string
-  default     = "centralindia"
+  default     = "eastus2"
 }
 
 variable "environment" {
