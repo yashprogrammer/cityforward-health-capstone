@@ -137,6 +137,7 @@ def test_terraform_security_properties():
     assert not re.search(r'(password|secret)\s*=\s*"[^"$]+"', t, flags=re.I)
     assert t.count("random_password") >= 3 and "azurerm_key_vault_secret" in t
     assert "VECTOR" in t           # pgvector is allow-listed
+    assert "PGAUDIT" in t and re.search(r'"pgaudit.log"', t)      # database-level audit independent of the application
 
 
 def test_terraform_outputs_match_what_the_chart_needs():

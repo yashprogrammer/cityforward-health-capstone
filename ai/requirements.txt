@@ -9,6 +9,7 @@ langgraph>=1.0
 langchain-core>=1.0
 langchain-openai>=1.0
 pypdf
+simple-icd-10-cm
 fpdf2
 prometheus-client
 opentelemetry-sdk
