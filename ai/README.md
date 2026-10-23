@@ -44,3 +44,11 @@ Build the image with `--build-arg FASTEMBED=1` and set `EMBEDDER=fastembed` for 
 the model's quote must appear verbatim in the cited chart text, descriptions come from the official list, and Excludes1 pairs / unspecified / provisional
 diagnoses become documentation queries for the clinician. A coder or attending accepts, rejects (with a reason) or modifies every line and picks the
 principal diagnosis; finalizing files a worksheet PDF into the chart. SNOMED CT needs a UMLS licence, so only a demonstration subset of mappings is bundled.
+
+## PHI redaction and audit (Build Session 4)
+
+* `redact.py` de-identifies every prompt at the gateway: exact-match removal of the patient's own identifiers (we hold them from the FHIR Patient resource), patterns for what we cannot know
+  (SSN, phone, email, URL, IP), dates turned into reversible offsets from admission (`[D+3]`), ages over 89 generalized, clinician names tokenized. The reply is restored locally, so the clinician sees real values.
+  `tests/test_redact.py` runs the real summary pipeline for **every patient in the hospital** with a spy model and scans every byte it received for that patient's identifiers.
+* `audit.py`: append-only, hash-chained `audit_log` (database triggers refuse UPDATE/DELETE/TRUNCATE; `GET /api/audit/verify` recomputes the chain). Every allowed and denied access, every AI call
+  (purpose, model, tokens, number of redactions) and every human decision (attest, approve, submit, code) is recorded with IDs only, never clinical text or prompts.

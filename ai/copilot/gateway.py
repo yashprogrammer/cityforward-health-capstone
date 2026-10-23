@@ -12,7 +12,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from . import db
+from . import audit, db
 from .llm import Backend, LLMError, cost_usd, extract_json
 
 T = TypeVar("T", bound=BaseModel)
@@ -39,7 +39,7 @@ class Gateway:
             raise LLMError("no model configured")
         restorer, n_red = None, 0
         if self.redactor is not None:
-            (system, user), restorer, n_red = self.redactor.apply_all([system, user], context)
+            (system, user), restorer, n_red = self.redactor.apply_all([system, user], patient_id=patient_id, context=context)
         t0 = time.perf_counter()
         status, reply = "error", None
         try:
@@ -64,6 +64,8 @@ class Gateway:
 
     @staticmethod
     def _record_db(r: dict) -> None:
+        audit.log(r["actor"] or "system", "ai.call", r["patient_id"], "allowed" if r["status"] == "ok" else "error",
+                  {"purpose": r["purpose"], "model": r["model"], "tokens_in": r["tokens_in"], "tokens_out": r["tokens_out"], "redactions": r["redactions"], "status": r["status"]})
         with db.session() as c:
             c.execute("""INSERT INTO llm_call (purpose, patient_id, actor, model, tokens_in, tokens_out, ms, cost_usd, redactions, status)
                          VALUES (%(purpose)s,%(patient_id)s,%(actor)s,%(model)s,%(tokens_in)s,%(tokens_out)s,%(ms)s,%(cost_usd)s,%(redactions)s,%(status)s)""", r)

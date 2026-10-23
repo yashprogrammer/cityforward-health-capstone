@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import coding, db, rag
+from . import audit, coding, db, rag
 from . import terminology as T
 from .access import authorize
 from .auth import CurrentUser, Principal
@@ -43,7 +43,7 @@ def _save(r: dict, **ch) -> dict:
 
 @router.post("/patients/{patient_id}/coding", status_code=201)
 def create(patient_id: str, p: Principal = CurrentUser):
-    authorize(p, "coding.suggest")                      # role first (cheap), then the patient once we know the unit
+    authorize(p, "coding.suggest", about=patient_id)                      # role first (cheap), then the patient once we know the unit
     rt = _rt()
     chart = load_chart(rt.get_fhir(), patient_id)
     authorize(p, "coding.suggest", patient_id, unit=chart.unit)
@@ -104,6 +104,7 @@ def decide(wid: str, item_id: str, body: DecideIn, p: Principal = CurrentUser):
     else:
         raise HTTPException(422, "action must be accept, reject or modify")
     item["reason"], item["decided_by"] = body.reason, p.user
+    audit.log(p, f"coding.{body.action}", r["patient_id"], detail={"id": wid, "code": item["code"], "final": item["final_code"]})
     hist = [*r["history"], {"at": now_iso(), "by": p.user, "what": f"{body.action} {item['code']}" + (f" -> {item['final_code']}" if body.action == "modify" else "")}]
     return _view(_save(r, history=hist))
 
@@ -138,6 +139,7 @@ def finalize(wid: str, body: FinalizeIn, p: Principal = CurrentUser):
     w = Worksheet(patient_id=r["patient_id"], encounter_id=r["encounter_id"], unit=r["unit"], items=[], queries=[], mode=r["mode"])
     final_codes = [{"code": i["final_code"], "description": T.describe(i["final_code"]), "role": i["role"]} for i in final]
     final_codes.sort(key=lambda c: c["role"] != "principal")
+    audit.log(p, "coding.finalized", r["patient_id"], detail={"id": wid, "codes": codes})
     r = _save(r, status="FINAL", finalized_by=p.user, finalized_at=now_iso(), history=[*r["history"], {"at": now_iso(), "by": p.user, "what": f"finalized {len(final_codes)} code(s)"}])
     try:
         _rt().get_fhir().post_document_pdf(r["patient_id"], r["encounter_id"], f"{wid} coding worksheet", coding.worksheet_pdf(w, chart.name, final_codes), doc_type="CODING_SUMMARY")

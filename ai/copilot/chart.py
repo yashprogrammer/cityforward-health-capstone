@@ -88,6 +88,21 @@ class Fact(BaseModel):
     encounter: str | None = None
 
 
+class Identity(BaseModel):
+    """Everything that identifies the patient (HIPAA Safe Harbor identifiers we hold). Used to de-identify prompts and to nothing else."""
+    names: list[str] = Field(default_factory=list)       # full name, given names, family name
+    mrn: str | None = None
+    member_id: str | None = None
+    dob: str | None = None
+    street: str | None = None
+    city: str | None = None
+    zip: str | None = None
+    phones: list[str] = Field(default_factory=list)
+    emails: list[str] = Field(default_factory=list)
+    accounts: list[str] = Field(default_factory=list)    # hospital account / encounter numbers
+    anchor: str | None = None                            # admission date: dates become offsets from this day
+
+
 class Chart(BaseModel):
     patient_id: str
     name: str
@@ -96,6 +111,7 @@ class Chart(BaseModel):
     payer: str | None = None
     member_id: str | None = None
     unit: str | None = None                      # ward of the current (or latest) inpatient stay
+    identity: Identity = Field(default_factory=Identity)
     encounters: list[Encounter] = Field(default_factory=list)
     conditions: list[Condition] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
@@ -240,6 +256,13 @@ def chart_from_fhir(resources: list[dict], fetch=None) -> Chart:
     chart.encounters.sort(key=lambda e: e.start)
     stay = chart.current_encounter()
     chart.unit = stay.unit if stay else None
+    addr = (p.get("address") or [{}])[0]
+    mrn = next((i["value"] for i in p.get("identifier", []) if any(c.get("code") == "MR" for c in i.get("type", {}).get("coding", []))), None)
+    chart.identity = Identity(
+        names=[chart.name, *nm.get("given", []), nm.get("family", "")], mrn=mrn, member_id=chart.member_id, dob=p.get("birthDate"),
+        street=(addr.get("line") or [None])[0], city=addr.get("city"), zip=addr.get("postalCode"),
+        phones=[t["value"] for t in p.get("telecom", []) if t.get("system") == "phone"], emails=[t["value"] for t in p.get("telecom", []) if t.get("system") == "email"],
+        accounts=[e.id for e in chart.encounters], anchor=(stay.start[:10] if stay else None))
     for c in by["Condition"]:
         chart.conditions.append(Condition(
             ref=f"Condition/{c['id']}", display=_text(c["code"]), icd10=_code(c["code"], "icd-10-cm"),

@@ -1,11 +1,13 @@
 """The Copilot HTTP API (FastAPI). Mounted by the hospital gateway under /ai (prefix stripped)."""
 from contextlib import asynccontextmanager
 
-from fastapi import Body, FastAPI, HTTPException
+import uuid
+
+from fastapi import Body, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from . import ask as ask_mod
-from . import cds, coding_api, db, priorauth_api, rag, summary
+from . import audit, cds, coding_api, db, priorauth_api, rag, summary
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -13,6 +15,7 @@ from .config import settings
 from .fhir_client import FhirClient, FhirError
 from .gateway import Gateway
 from .llm import get_backend
+from .redact import Redactor
 
 
 class Runtime:
@@ -25,7 +28,7 @@ class Runtime:
         return self.fhir
 
     def get_gateway(self) -> Gateway:
-        self.gateway = self.gateway or Gateway(get_backend())
+        self.gateway = self.gateway or Gateway(get_backend(), redactor=Redactor(rag.identity_of))
         return self.gateway
 
 
@@ -49,6 +52,15 @@ def _chart(patient_id: str):
         return load_chart(rt.get_fhir(), patient_id)
     except FhirError as e:
         raise HTTPException(502 if e.status != 404 else 404, f"EHR: {e}") from e
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
+    audit.set_context(rid, request.client.host if request.client else None)
+    response = await call_next(request)
+    response.headers["x-request-id"] = rid
+    return response
 
 
 @app.get("/healthz")
@@ -89,3 +101,16 @@ def patient_summary(patient_id: str, p: Principal = CurrentUser):
 def about(p: Principal = CurrentUser):
     """What this tool is and is not (shown in the dashboard's 'About' panel)."""
     return {"intended_use": cds.INTENDED_USE, "method": cds.METHOD, "limitations": cds.LIMITS, "criteria": cds.CRITERIA}
+
+
+@app.get("/api/audit")
+def audit_search(patient: str | None = None, actor: str | None = None, action: str | None = None, p: Principal = CurrentUser):
+    authorize(p, "audit.view")
+    audit.log(p, "audit.view", patient, detail={"actor": actor, "action": action})
+    return audit.search(patient, actor, action)
+
+
+@app.get("/api/audit/verify")
+def audit_verify(p: Principal = CurrentUser):
+    authorize(p, "audit.view")
+    return audit.verify_chain()

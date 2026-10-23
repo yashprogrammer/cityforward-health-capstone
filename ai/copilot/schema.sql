@@ -23,8 +23,10 @@ CREATE TABLE IF NOT EXISTS patient_index (
     patient_id  TEXT PRIMARY KEY,
     unit        TEXT,
     chunks      INT NOT NULL,
+    identity    JSONB,                          -- what to strip from prompts for this patient (see redact.py)
     indexed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE patient_index ADD COLUMN IF NOT EXISTS identity JSONB;
 
 -- every model call, metered (tokens, latency, cost) and attributable. Prompts and replies are NOT stored: they contain PHI.
 CREATE TABLE IF NOT EXISTS llm_call (

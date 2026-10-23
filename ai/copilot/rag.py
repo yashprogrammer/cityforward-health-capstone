@@ -49,8 +49,9 @@ def index_chart(chart: Chart, principal=None) -> dict:
             c.execute("DELETE FROM chunk WHERE patient_id=%s AND source_ref=%s AND content_hash=%s", (chart.patient_id, ref, h))
         c.execute("UPDATE chunk SET unit=%s WHERE patient_id=%s AND unit IS DISTINCT FROM %s", (chart.unit, chart.patient_id, chart.unit))
         total = c.execute("SELECT count(*) n FROM chunk WHERE patient_id=%s", (chart.patient_id,)).fetchone()["n"]
-        c.execute("""INSERT INTO patient_index (patient_id, unit, chunks, indexed_at) VALUES (%s,%s,%s, now())
-                     ON CONFLICT (patient_id) DO UPDATE SET unit=EXCLUDED.unit, chunks=EXCLUDED.chunks, indexed_at=now()""", (chart.patient_id, chart.unit, total))
+        c.execute("""INSERT INTO patient_index (patient_id, unit, chunks, identity, indexed_at) VALUES (%s,%s,%s,%s, now())
+                     ON CONFLICT (patient_id) DO UPDATE SET unit=EXCLUDED.unit, chunks=EXCLUDED.chunks, identity=EXCLUDED.identity, indexed_at=now()""",
+                  (chart.patient_id, chart.unit, total, chart.identity.model_dump_json()))
     return {"patient_id": chart.patient_id, "chunks": total, "added": len(new), "removed": len(stale)}
 
 
@@ -83,3 +84,11 @@ def _or_query(q: str) -> str:
 
 
 _QUESTION_WORDS = frozenset("what when where which who why how does did was were the and for with this that has have had been are any there their from about patient".split())
+
+
+def identity_of(patient_id: str):
+    """Identity record stored at indexing time (used by the redactor when a call has no chart in hand)."""
+    from .chart import Identity
+    with session() as c:
+        r = c.execute("SELECT identity FROM patient_index WHERE patient_id=%s", (patient_id,)).fetchone()
+    return Identity(**r["identity"]) if r and r["identity"] else None

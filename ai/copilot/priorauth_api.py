@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import db, priorauth, rag
+from . import audit, db, priorauth, rag
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -88,7 +88,7 @@ class DraftIn(BaseModel):
 
 @router.post("/patients/{patient_id}/prior-auth", status_code=201)
 def create_draft(patient_id: str, body: DraftIn, p: Principal = CurrentUser):
-    authorize(p, "priorauth.draft")                     # role first (cheap), then the patient once we know the unit
+    authorize(p, "priorauth.draft", about=patient_id)                     # role first (cheap), then the patient once we know the unit
     rt = _rt()
     chart = load_chart(rt.get_fhir(), patient_id)
     authorize(p, "priorauth.draft", patient_id, unit=chart.unit)
@@ -109,6 +109,7 @@ def create_draft(patient_id: str, body: DraftIn, p: Principal = CurrentUser):
                      problems, created_by, history) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                   (pa_id, patient_id, d.encounter_id, d.unit, d.service_code, d.service_name, d.plan, status,
                    json.dumps([q.model_dump() for q in d.requirements]), json.dumps(d.diagnoses), d.letter, d.mode, d.model, json.dumps(d.problems), p.user, json.dumps(hist)))
+    audit.log(p, "priorauth.create", patient_id, detail={"id": pa_id, "service": d.service_code, "mode": d.mode, "open": len(d.gaps)})
     return _view(_row(pa_id))
 
 
@@ -166,6 +167,7 @@ def review_requirement(pa_id: str, req_id: str, body: ReviewIn, p: Principal = C
     else:
         raise HTTPException(422, "action must be accept, reject, attest or provide")
     req.reviewed_by = p.user
+    audit.log(p, f"priorauth.{body.action}", r["patient_id"], detail={"id": pa_id, "requirement": req_id})
     chart, d = _chart_and_draft(r)
     d.requirements = [req if q.id == req_id else q for q in reqs]
     # editing a pended request reopens it: the clinician signs the new evidence again before it goes back to the payer
@@ -187,6 +189,7 @@ def approve(pa_id: str, body: ApproveIn | None = None, p: Principal = CurrentUse
     if gaps and len(reason.strip()) < 15:
         raise HTTPException(409, f"open requirements: {', '.join(gaps)}. Resolve them, or approve with a written reason (the payer will probably pend the request).")
     what = "approved for submission" + (f" with gaps {gaps}: {reason}" if gaps else "")
+    audit.log(p, "priorauth.approved", r["patient_id"], detail={"id": pa_id, "with_gaps": gaps})
     return _view(_save(r, status="APPROVED", approved_by=p.user, approved_at=priorauth.now_iso(), history=_event(r, p.user, what)))
 
 
@@ -211,6 +214,7 @@ def submit(pa_id: str, p: Principal = CurrentUser):
         cr = deps.get_payer().submit(priorauth.build_pas_bundle(chart, d, identifier))
     except PayerError as e:
         raise HTTPException(502, f"payer rejected the submission: {e}") from e
+    audit.log(p, "priorauth.submitted", r["patient_id"], detail={"id": pa_id, "service": r["service_code"], "payer": r["plan"]})
     r = _save(r, claim_identifier=identifier, submitted_by=p.user, submitted_at=priorauth.now_iso(), status="SUBMITTED")
     r = _apply_payer_response(r, cr, "payer")
     _file_packet(chart, d, r)
