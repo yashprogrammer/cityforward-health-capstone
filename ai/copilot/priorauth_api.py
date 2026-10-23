@@ -88,9 +88,10 @@ class DraftIn(BaseModel):
 
 @router.post("/patients/{patient_id}/prior-auth", status_code=201)
 def create_draft(patient_id: str, body: DraftIn, p: Principal = CurrentUser):
-    authorize(p, "priorauth.draft", patient_id)
+    authorize(p, "priorauth.draft")                     # role first (cheap), then the patient once we know the unit
     rt = _rt()
     chart = load_chart(rt.get_fhir(), patient_id)
+    authorize(p, "priorauth.draft", patient_id, unit=chart.unit)
     rag.index_chart(chart, p)       # the retrieval step needs a fresh index of this chart
     try:
         rule = deps.get_payer().rule(body.service_code, chart.payer)

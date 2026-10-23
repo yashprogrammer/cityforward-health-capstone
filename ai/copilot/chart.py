@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from .fhir_client import FhirClient
 
-EXT_WARD = "/ward-code"
+AI_GENERATED_TYPES = {"PRIOR_AUTH", "CODING_SUMMARY"}
 
 
 class Encounter(BaseModel):
@@ -77,6 +77,7 @@ class Document(BaseModel):
     text: str = ""
     encounter: str | None = None
     mime: str = "text/plain"
+    generated: bool = False      # filed by this AI service itself; never used as evidence (no feedback loops)
 
 
 class Fact(BaseModel):
@@ -169,7 +170,7 @@ class Chart(BaseModel):
                     text = f"{label} {last.name} ({last.unit}): {trend}" + (f"; flagged {last.flag}" if last.flag else "")
                 f.append(Fact(ref=last.ref, kind="lab" if cat == "laboratory" else "vital", when=last.date, encounter=last.encounter, text=text))
         for d in self.documents:
-            if not d.text:
+            if not d.text or d.generated:
                 continue
             for i, part in enumerate(split_text(d.text, note_chars)):
                 f.append(Fact(ref=d.ref, kind="note" if d.mime.startswith("text") else "document", when=d.date, encounter=d.encounter,
@@ -277,7 +278,8 @@ def chart_from_fhir(resources: list[dict], fetch=None) -> Chart:
             body = raw.decode("utf-8", "replace").strip() if mime.startswith("text/") else _pdf_text(raw) if mime == "application/pdf" else ""
         chart.documents.append(Document(
             ref=f"DocumentReference/{d['id']}", kind=kind, date=d.get("date", ""), author=(d.get("author") or [{}])[0].get("display", ""), text=body,
-            encounter=_rid(((d.get("context") or {}).get("encounter") or [{}])[0].get("reference")), mime=mime))
+            encounter=_rid(((d.get("context") or {}).get("encounter") or [{}])[0].get("reference")), mime=mime,
+            generated=kind in AI_GENERATED_TYPES))
     chart.documents.sort(key=lambda d: d.date)
     return chart
 

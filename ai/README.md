@@ -37,3 +37,10 @@ Build the image with `--build-arg FASTEMBED=1` and set `EMBEDDER=fastembed` for 
 | Attest | treating clinician only | the assistant never attests |
 | Approve | attending only | needs no open requirement, or a written reason to submit with gaps |
 | Submit / poll | PA coordinator or clinician | pended requests (`A4`) reopen for edits and are resubmitted under the same identifier |
+
+## Coding with the coder in the loop
+
+`coding.py` proposes ICD-10-CM codes; `terminology.py` (public-domain code set, no network) decides what may be shown: the code must exist and be billable,
+the model's quote must appear verbatim in the cited chart text, descriptions come from the official list, and Excludes1 pairs / unspecified / provisional
+diagnoses become documentation queries for the clinician. A coder or attending accepts, rejects (with a reason) or modifies every line and picks the
+principal diagnosis; finalizing files a worksheet PDF into the chart. SNOMED CT needs a UMLS licence, so only a demonstration subset of mappings is bundled.
