@@ -1,0 +1,79 @@
+# Every push and pull request: the same checks a hospital security reviewer will ask about, run automatically.
+# STATUS: written and syntax-checked locally; not yet executed on GitHub.
+name: ci
+on:
+  push: {branches: [integrated, main]}
+  pull_request:
+permissions: {contents: read}
+concurrency: {group: "ci-${{ github.ref }}", cancel-in-progress: true}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: {POSTGRES_PASSWORD: postgres}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+    env:
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - name: database roles (what hospital IT does once)
+        run: |
+          psql -h localhost -U postgres -c "CREATE ROLE meditrack LOGIN PASSWORD 'meditrack' CREATEDB; CREATE DATABASE meditrack OWNER meditrack;"
+          psql -h localhost -U postgres -c "CREATE ROLE copilot LOGIN PASSWORD 'copilot'; CREATE DATABASE copilot OWNER copilot;"
+          psql -h localhost -U postgres -d copilot -c "CREATE EXTENSION vector"
+      - run: pip install -r customer/requirements.txt -r ai/requirements.txt pyyaml kubernetes-validate python-hcl2
+      - name: unit and integration tests (EHR, copilot, evaluation harness)
+        run: PYTHONPATH=ai:customer pytest customer/tests ai/tests -q
+      - name: "golden-set floor (no model): safety gates must hold"
+        run: |
+          PYTHONPATH=ai:customer python -m evalkit run --provider offline --out results/offline
+          python - <<'PY'
+          import json
+          m = json.load(open("results/offline/metrics.json"))["metrics"]
+          assert m["ask.directive_or_risk_violations"] == 0 and m["ask.identifier_leaks"] == 0 and m["summary.forbidden_hits"] == 0, m
+          PY
+      - uses: azure/setup-helm@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: deployment checks (chart schema + posture, platform policies, terraform)
+        run: pytest deploy/tests -q -k "not otel"
+
+  security-scan:
+    runs-on: ubuntu-24.04
+    permissions: {contents: read, security-events: write}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: secret scan (full history)
+        uses: gitleaks/gitleaks-action@v2
+        env: {GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
+      - name: dependency vulnerabilities
+        run: pip install pip-audit && pip-audit -r ai/requirements.txt -r customer/requirements.txt
+      - name: static analysis (Python)
+        run: pip install bandit && bandit -r ai/copilot customer/meditrack customer/mock_payer -ll -q
+      - uses: github/codeql-action/init@v3
+        with: {languages: "python,javascript"}
+      - uses: github/codeql-action/analyze@v3
+      - name: Kubernetes and Terraform misconfiguration
+        uses: aquasecurity/trivy-action@0.28.0
+        with: {scan-type: config, scan-ref: deploy, severity: "HIGH,CRITICAL", exit-code: "1"}
+
+  images:
+    runs-on: ubuntu-24.04
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build (no push) so a broken Dockerfile fails the pull request
+        run: |
+          docker buildx build -t cityforward-customer:ci customer
+          docker buildx build -f ai/Dockerfile -t cityforward-ai:ci .
+      - name: image vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with: {image-ref: "cityforward-ai:ci", severity: "CRITICAL", exit-code: "1", ignore-unfixed: true}

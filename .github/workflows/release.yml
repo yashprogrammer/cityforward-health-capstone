@@ -1,0 +1,47 @@
+# Release: build, push to the registry, attach an SBOM, sign with cosign (keyless, GitHub OIDC), record provenance.
+# Kyverno (deploy/platform/kyverno/policies.yaml) admits only images signed by THIS workflow on the integrated branch, so an image built anywhere else cannot run.
+# STATUS: written and syntax-checked locally; not yet executed on GitHub.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write        # keyless signing
+  packages: write
+  attestations: write
+env:
+  REGISTRY: ${{ vars.ACR_LOGIN_SERVER }}      # e.g. cityforwardacrxxxxx.azurecr.io (private: run this job on a self-hosted runner inside the VNet)
+jobs:
+  release:
+    runs-on: [self-hosted, linux, cityforward-vnet]
+    strategy:
+      matrix:
+        include:
+          - {name: cityforward-customer, context: customer, file: customer/Dockerfile}
+          - {name: cityforward-ai, context: ., file: ai/Dockerfile}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with: {client-id: "${{ secrets.AZURE_CLIENT_ID }}", tenant-id: "${{ secrets.AZURE_TENANT_ID }}", subscription-id: "${{ secrets.AZURE_SUBSCRIPTION_ID }}"}
+      - run: az acr login --name "${REGISTRY%%.*}"
+      - uses: docker/setup-buildx-action@v3
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ matrix.name }}:${{ github.ref_name }}
+          sbom: true                 # SPDX SBOM attached to the image
+          provenance: mode=max       # SLSA provenance
+      - uses: sigstore/cosign-installer@v3
+      - name: sign the image digest (keyless)
+        run: cosign sign --yes "${REGISTRY}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+      - name: attest the SBOM
+        run: |
+          docker buildx imagetools inspect "${REGISTRY}/${{ matrix.name }}@${{ steps.build.outputs.digest }}" --format '{{ json .SBOM.SPDX }}' > sbom.spdx.json
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "${REGISTRY}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+      - name: print the digest to pin in values-aks.yaml
+        run: echo "${{ matrix.name }} -> @${{ steps.build.outputs.digest }}"
