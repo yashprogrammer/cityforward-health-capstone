@@ -1,0 +1,16 @@
+# Local stand-in for the hospital's ingress: one origin for MediTrack and the AI vendor's app (so the embedded app is same-site).
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	# the AI vendor's SMART app and API (prefix stripped)
+	handle_path /ai/* {
+		reverse_proxy ai:8080
+	}
+	# MediTrack: UI, /int (internal), /fhir, /smart
+	handle {
+		reverse_proxy meditrack:8001
+	}
+}

@@ -1,0 +1,79 @@
+# CityForward Health - local stack.
+#   docker compose up --build          the customer's world: Postgres, MediTrack (+ FHIR/SMART/webhooks), mock payer, gateway
+#   docker compose --profile idp up    + Keycloak (the hospital's identity provider)
+# MediTrack: http://localhost:8001        mock payer: http://localhost:8003/rules
+name: cityforward
+
+x-customer: &customer
+  build: ./customer
+  image: cityforward-customer
+  restart: unless-stopped
+
+services:
+  db:   # the hospital's database server (Oracle in the story; Azure Database for PostgreSQL in the cloud)
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./customer/platform/compose/initdb:/docker-entrypoint-initdb.d:ro
+    ports: ["${PG_PORT:-5432}:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      retries: 40
+
+  seed:   # first-start data load (Synthea + golden patients). Re-run with: docker compose run --rm seed --force
+    <<: *customer
+    restart: "no"
+    environment:
+      APP_ROLE: seed
+      MEDITRACK_DB_URL: postgresql://meditrack:meditrack@db:5432/meditrack
+      MEDITRACK_DOCS_DIR: /data/documents
+      MEDITRACK_HOTFOLDER: /data/import_hotfolder
+      AI_WEBHOOK_URL: ${AI_WEBHOOK_URL:-}
+      AI_WEBHOOK_SECRET: ${AI_WEBHOOK_SECRET:-dev-webhook-secret}
+      AI_BACKEND_JWKS: ${AI_BACKEND_JWKS:-}
+    volumes: [docs:/data/documents, hotfolder:/data/import_hotfolder]
+    depends_on:
+      db: {condition: service_healthy}
+
+  meditrack:
+    <<: *customer
+    environment:
+      APP_ROLE: meditrack
+      MEDITRACK_DB_URL: postgresql://meditrack:meditrack@db:5432/meditrack
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8001}
+      SMART_SIGNING_KEY_PEM: ${SMART_SIGNING_KEY_PEM:-}
+    volumes: [docs:/data/documents, hotfolder:/data/import_hotfolder]
+    depends_on:
+      seed: {condition: service_completed_successfully}
+
+  payer:    # the insurer's prior-authorization API (fictional)
+    <<: *customer
+    environment:
+      APP_ROLE: payer
+      PAYER_API_KEY: ${PAYER_API_KEY:-demo-payer-key}
+    ports: ["${PAYER_PORT:-8003}:8003"]
+
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes: ["./customer/platform/compose/gateway/Caddyfile:/etc/caddy/Caddyfile:ro"]
+    ports: ["${MEDITRACK_PORT:-8001}:80"]
+    depends_on: [meditrack]
+
+  keycloak:   # optional hospital IdP (docker compose --profile idp up)
+    profiles: ["idp"]
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    volumes: ["./customer/platform/keycloak:/opt/keycloak/data/import:ro"]
+    ports: ["${KEYCLOAK_PORT:-8180}:8080"]
+
+volumes:
+  pgdata:
+  docs:
+  hotfolder:
