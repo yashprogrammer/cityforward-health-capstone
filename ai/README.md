@@ -83,3 +83,8 @@ verbatim chart text behind whatever you select; "About this tool" shows the inte
 cd ai/dashboard && npm ci && npm run build          # served by the service at /ai/ (the Docker image builds it)
 python ai/e2e/smoke.py ./shots                      # browser smoke test of the whole flow
 ```
+
+## Cost, latency and multi-agent design
+
+`docs/cost-latency.md` (measured prompt sizes, per-discharge cost, budgets, the daily spend circuit breaker, the evidence-keyed result cache, per-purpose model routing, `GET /api/usage`) and
+`docs/multi-agent-design.md` (`discharge.py`: summary, coding and prior-auth agents under a deterministic supervisor; per-role permissions; failure isolation; parallel; humans decide).
