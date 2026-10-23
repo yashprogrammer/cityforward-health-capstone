@@ -68,3 +68,8 @@ Decisions from the grill-me rounds of 2026-10-23. All organizations, people and 
 | `handoff` | Readout, handoff, interview | Executive readout deck outline, ownership/runbook handoff pack, interview case-study notes |
 
 Course materials for the non-code lectures (discovery playbook, MECE issue tree, scope document, mock-call script, debrief, wedge memo) are written alongside.
+
+
+## Implementation notes (added after the build)
+
+The build followed this record with the deviations listed in [`FINAL_REVIEW.md`](FINAL_REVIEW.md) section 5 (notably: MediTrack is the SMART authorization server with Keycloak as an optional staff IdP, a different incident scenario, pgAudit added, Foundry/Entra not in Terraform, tags pushed as `session/*` branches).
