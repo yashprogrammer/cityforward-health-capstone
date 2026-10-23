@@ -21,7 +21,7 @@ ROLE_ACTIONS: dict[str, set[str]] = {
     "HIM_CODER": {"index", "ask", "summary", "coding.view", "coding.suggest", "coding.decide"},
     "IT_ADMIN": {"audit.view", "breakglass.review", "events.view", "events.replay", "usage.view"},         # operates the platform and reviews access logs; sees no clinical content
     "COMPLIANCE": {"audit.view", "breakglass.review", "usage.view"},       # privacy officer (a Keycloak-issued role)
-    "SERVICE": {"index", "priorauth.draft", "coding.suggest"},  # the event worker prepares drafts; humans review them
+    "SERVICE": {"index", "summary", "priorauth.draft", "coding.suggest"},  # the event worker prepares drafts; humans review them
 }
 
 

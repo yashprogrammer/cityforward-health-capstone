@@ -1,6 +1,27 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from './api.js'
 import { Chip, ErrorNote, useAction } from './parts.jsx'
+
+const AGENT_LABEL = { summary: 'Stay summary', coding: 'Coding worksheet', 'prior-auth': 'Prior authorization' }
+const STATUS_TEXT = { ok: 'ready', degraded: 'ready (no-AI mode)', failed: 'failed', skipped: 'not for your role', 'nothing-to-do': 'nothing to do' }
+
+function Packet({ patient }) {
+  const [r, setR] = useState(null)
+  const { busy, error, run } = useAction()
+  useEffect(() => { api(`/patients/${patient}/readiness`).then((x) => x.generated_at && setR(x)).catch(() => {}) }, [patient])
+  const prepare = () => run(async () => setR(await api(`/patients/${patient}/readiness`, { method: 'POST' })))
+  return (
+    <section className="card" aria-labelledby="packet-h">
+      <div className="row"><h2 id="packet-h">Discharge packet</h2><button className="primary" onClick={prepare} disabled={busy}>{busy ? 'Preparing…' : r ? 'Refresh' : 'Prepare discharge packet'}</button></div>
+      <ErrorNote error={error} />
+      {!r && !busy && <p className="muted">Three specialist assistants prepare the paperwork in parallel (summary, coding, prior authorization). They prepare; people decide.</p>}
+      {r && <>
+        <ul className="agents">{r.agents.map((a) => <li key={a.agent} className={`ag ${a.status}`}><b>{AGENT_LABEL[a.agent] || a.agent}</b> <span>{STATUS_TEXT[a.status] || a.status}</span>{a.detail && <small>{a.detail}</small>}{a.error && <small className="err">{a.error}</small>}</li>)}</ul>
+        {r.blockers.length > 0 ? <><h4>Waiting on a person</h4><ul>{r.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul></> : <p className="muted">Nothing is waiting on a person.</p>}
+      </>}
+    </section>
+  )
+}
 
 export default function Overview({ data, patient, setWhy }) {
   const [res, setRes] = useState(null)
@@ -23,6 +44,8 @@ export default function Overview({ data, patient, setWhy }) {
             </button>))}
         </div>
       </section>
+
+      <Packet patient={patient} />
 
       <section aria-labelledby="sum-h" className="card">
         <div className="row"><h2 id="sum-h">Hospital stay summary</h2>

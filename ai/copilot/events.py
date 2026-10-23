@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from . import audit, coding_api, db, priorauth, priorauth_api, rag, telemetry
+from . import audit, coding_api, db, discharge, priorauth, priorauth_api, rag, telemetry
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -102,12 +102,13 @@ def on_document_added(ev: dict) -> dict:
 def on_discharge_advised(ev: dict) -> dict:
     """Discharge was advised: this is the clock that costs money. Have the paperwork ready before anyone asks."""
     chart, idx = _sync(ev["patient_id"])
-    made = []
-    from .payer_client import PayerClient  # noqa: F401  (payer reached through priorauth_api.deps)
-    for sug in priorauth.suggest_services(chart, priorauth_api.deps.get_payer()):
-        if sug.pa_required and not priorauth_api.open_request(chart.patient_id, sug.service_code):
-            made.append(priorauth_api.create_draft_for(WORKER, chart.patient_id, sug.service_code, chart=chart)["id"])
-    return {"indexed": idx["chunks"], "prior_auth_drafts": made}
+    r = discharge.prepare(chart, _rt().get_gateway(), WORKER, priorauth_api.deps.get_payer())      # summary, coding and prior-auth agents, in parallel
+    discharge.store(r, chart, WORKER)
+    made = [a for ag in r.agents if ag.agent == "prior-auth" for a in ag.artifacts]
+    failed = [ag.agent for ag in r.agents if ag.status == "failed"]
+    if failed:
+        raise RuntimeError(f"agents failed: {', '.join(failed)}: " + "; ".join(ag.error for ag in r.agents if ag.status == "failed"))     # the whole event is retried; finished artifacts are not duplicated
+    return {"indexed": idx["chunks"], "prior_auth_drafts": made, "agents": {ag.agent: ag.status for ag in r.agents}, "blockers": len(r.blockers)}
 
 
 def on_discharged(ev: dict) -> dict:

@@ -82,3 +82,9 @@ details summary { cursor: pointer; color: var(--muted); font-size: .85rem; margi
   .banner { position: static; } table, thead, tbody, tr, td { display: block; } thead { display: none; } td { border: 0; } tr { border-bottom: 1px solid var(--line); padding: .4rem 0; }
 }
 @media (prefers-reduced-motion: no-preference) { .ev, .flag, .card { transition: border-color .15s, box-shadow .15s; } .flag:hover, .ev:hover { border-color: var(--brand); } }
+
+.agents { list-style: none; padding: 0; display: grid; gap: .4rem; margin: .6rem 0; }
+.ag { display: grid; grid-template-columns: 11rem 1fr; gap: .1rem .8rem; padding: .45rem .7rem; border-radius: 8px; background: var(--line2); border-left: 4px solid var(--muted); }
+.ag small { grid-column: 2; color: var(--muted); } .ag .err { color: var(--bad); }
+.ag.ok { border-left-color: var(--ok); } .ag.degraded { border-left-color: var(--warn); } .ag.failed { border-left-color: var(--bad); background: var(--bad-bg); }
+@media (max-width: 900px) { .ag { grid-template-columns: 1fr; } .ag small { grid-column: 1; } }

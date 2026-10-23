@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ask as ask_mod
-from . import audit, breakglass, cds, coding_api, dashboard, db, events, priorauth_api, rag, summary, telemetry, usage
+from . import audit, breakglass, cds, coding_api, dashboard, db, discharge, events, priorauth_api, rag, summary, telemetry, usage
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -160,3 +160,22 @@ async def security_headers(request: Request, call_next):
 
 
 telemetry.setup(app)
+
+
+@app.post("/api/patients/{patient_id}/readiness")
+def prepare_readiness(patient_id: str, p: Principal = CurrentUser):
+    """Run the specialist agents this role may run and return the discharge packet status. Humans still decide everything."""
+    from .priorauth_api import deps
+    chart = _chart(patient_id)
+    authorize(p, "summary", patient_id, unit=chart.unit)
+    rag.index_chart(chart, p)
+    r = discharge.prepare(chart, rt.get_gateway(), p, deps.get_payer())
+    discharge.store(r, chart, p)
+    audit.log(p, "readiness.prepared", patient_id, detail={a.agent: a.status for a in r.agents})
+    return r
+
+
+@app.get("/api/patients/{patient_id}/readiness")
+def get_readiness(patient_id: str, p: Principal = CurrentUser):
+    authorize(p, "summary", patient_id)
+    return discharge.latest(patient_id, p) or {"agents": [], "blockers": [], "generated_at": None}
