@@ -126,6 +126,7 @@ def m_encounter(r: dict) -> dict:
         enc["participant"] = [{"type": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v3-ParticipationType", "code": "PPRF"}]}],
                                "individual": ref("Practitioner", r["DR_ID"])}]
     if r["WRD_CD"]:
+        enc["extension"].append({"url": f"{SYS['meditrack']}/ward-code", "valueCode": r["WRD_CD"]})
         enc["location"] = [{"location": {"display": f"{UNIT_NAMES.get(r['WRD_CD'], r['WRD_CD'])}" + (f", bed {r['BED_NO']}" if r["BED_NO"] else "")}}]
     if r["DSCH_ADV_DT"]:
         enc["extension"].append({"url": f"{SYS['meditrack']}/discharge-advised-at", "valueDateTime": iso(r["DSCH_ADV_DT"])})
