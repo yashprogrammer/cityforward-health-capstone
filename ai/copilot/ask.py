@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from . import rag
 from .gateway import Gateway
+from . import cds
 from .grounding import check_statement
 from .llm import LLMError
 
@@ -99,7 +100,7 @@ def _ground(s: State) -> State:
     d = s.get("draft")
     if d is None or d.insufficient_evidence:
         return {"problems": []} if d else {}
-    return {"problems": check_statement(d.answer, d.citations, s["evidence"])}
+    return {"problems": check_statement(d.answer, d.citations, s["evidence"]) + cds.lint(d.answer)}
 
 
 def _cites(s: State, ids: list[str]) -> list[Citation]:

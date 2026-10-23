@@ -5,7 +5,7 @@ from fastapi import Body, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from . import ask as ask_mod
-from . import coding_api, db, priorauth_api, rag, summary
+from . import cds, coding_api, db, priorauth_api, rag, summary
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -74,10 +74,18 @@ def ask_patient(patient_id: str, body: AskIn = Body(...), p: Principal = Current
     authorize(p, "ask", patient_id)
     if not body.question.strip() or len(body.question) > 1000:
         raise HTTPException(422, "question must be 1-1000 characters")
-    return ask_mod.ask(rt.get_gateway(), patient_id, body.question.strip(), principal=p)
+    res = ask_mod.ask(rt.get_gateway(), patient_id, body.question.strip(), principal=p)
+    return {**res.model_dump(), "cds": cds.envelope("ask", [{"ref": c.source_ref, "text": c.text} for c in res.citations], generated=res.mode == "llm")}
 
 
 @app.post("/api/patients/{patient_id}/summary")
 def patient_summary(patient_id: str, p: Principal = CurrentUser):
     authorize(p, "summary", patient_id)
-    return summary.summarize(rt.get_gateway(), _chart(patient_id), principal=p)
+    res = summary.summarize(rt.get_gateway(), _chart(patient_id), principal=p)
+    return {**res.model_dump(), "cds": cds.envelope("summary", [{"ref": x.ref, "text": x.text} for x in res.sources.values()], generated=res.mode == "llm")}
+
+
+@app.get("/api/about")
+def about(p: Principal = CurrentUser):
+    """What this tool is and is not (shown in the dashboard's 'About' panel)."""
+    return {"intended_use": cds.INTENDED_USE, "method": cds.METHOD, "limitations": cds.LIMITS, "criteria": cds.CRITERIA}

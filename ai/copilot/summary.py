@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .chart import Chart, Fact
 from .gateway import Gateway
+from . import cds
 from .grounding import check_statement
 from .llm import LLMError
 
@@ -129,7 +130,8 @@ def _ground(s: State) -> State:
     ev = {k: f.text for k, f in s["facts"].items()}
     problems = [] if d.findings else ["no findings were given"]
     for st in d.findings + d.follow_up:
-        problems += check_statement(st.text, st.sources, ev)
+        problems += check_statement(st.text, st.sources, ev) + cds.lint(st.text)
+    problems += cds.lint(f"{d.headline}. {d.course}. {d.history}")
     return {"problems": problems}
 
 
