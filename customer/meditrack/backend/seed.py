@@ -40,6 +40,9 @@ def register_integrations(conn) -> None:
         conn.execute("INSERT INTO SMT_CLIENT VALUES (%s,%s,'BACKEND',NULL,%s,%s,1,%s)",
                      ("cityforward-ai-backend", "CityForward AI backend service", json.dumps(json.loads(jwks)),
                       "system/*.read system/DocumentReference.write", now()))
+    if os.getenv("AI_LAUNCH_URL"):      # IT adds the vendor's app to System Admin > External Links as a SMART-launched link
+        conn.execute("INSERT INTO SYS_EXT_LNK (LNK_LBL, LNK_URL, DISP_MD, IS_ACTV, CRT_BY, CRT_DT) VALUES (%s,%s,'SMART',1,'it.admin',%s)",
+                     ("AI Clinical Insights", os.environ["AI_LAUNCH_URL"], now()))
     if os.getenv("AI_WEBHOOK_URL"):
         conn.execute("INSERT INTO SYS_WEBHOOK (WH_NM, WH_URL, WH_SECRET, EVENTS, IS_ACTV, CRT_BY, CRT_DT) VALUES (%s,%s,%s,%s,1,'it.admin',%s)",
                      ("CityForward AI", os.environ["AI_WEBHOOK_URL"], os.getenv("AI_WEBHOOK_SECRET", "change-me"), "*", now()))
