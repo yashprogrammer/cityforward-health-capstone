@@ -26,6 +26,7 @@ def configure_env(workdir: Path | None = None) -> None:
     os.environ.setdefault("COPILOT_DB_URL", "postgresql://copilot:copilot@localhost:5432/copilot")
     os.environ["MEDITRACK_BASE_URL"] = "http://testserver"
     os.environ.setdefault("EVENT_WORKER", "off")
+    os.environ.setdefault("CANARY_SECONDS", "0")
 
 
 @contextmanager

@@ -32,7 +32,8 @@ Do not delete data or restart things before the evidence is saved.
 | Signal | Source | First actions |
 |---|---|---|
 | `AuditLogWriteFailing` | Prometheus (`copilot_audit_failures_total`) | **SEV2 at once.** Access is happening unrecorded. Check database health and disk; if not fixed in 15 minutes switch the service to read-only maintenance mode (scale to 0 behind the ingress banner). Run `GET /api/audit/verify` after recovery and note any gap in the timeline |
-| `RedactionStoppedWorking` | Prometheus (model calls without redactions) | **SEV2.** Set `LLM_PROVIDER=offline` immediately. Identify the window from `llm_call` (`redactions = 0`) and the audit trail; treat prompts in that window as disclosed to the model provider and go to playbook P1 |
+| `RedactionCanaryFailed` | the redaction canary (`ai/copilot/canary.py`), every 5 minutes against the live gateway | **SEV2, fires without any traffic.** Same first action as the next row |
+| `RedactionStoppedWorking` | Prometheus (`copilot_unredacted_calls_total`: model calls that went out with nothing redacted) | **SEV2.** Set `LLM_PROVIDER=offline` immediately. Identify the window from `llm_call` (`redactions = 0`) and the audit trail; treat prompts in that window as disclosed to the model provider and go to playbook P1 |
 | `GET /api/audit/verify` returns `ok: false` | scheduled check | **SEV1.** Preserve the database (snapshot), identify `first_bad_id`, go to playbook P2 |
 | Falco: private key read, shell in container, unexpected egress | Falco | **SEV1** for key read or egress to a non-allowed destination; **SEV2** for a shell. Isolate the pod (apply a deny-all NetworkPolicy to its label), keep it running for forensics |
 | `UnusualAccessDenials` / `BreakGlassUsed` | Prometheus, audit | SEV3 review by the privacy officer; escalate if one user is repeatedly denied across many patients |
@@ -75,4 +76,6 @@ Close when: containment verified, root cause fixed with a regression test, golde
 ## 10. Tabletop exercise: "What almost went wrong"
 
 Scenario (used in the course's incident lecture): a developer changes how prompts are assembled and, as a side effect, the redactor is bypassed for one feature. The golden-set leakage test is not run because the change touched only a template.
-Discussion points: which alert fires first (`RedactionStoppedWorking` after one hour), what the on-call does in the first 10 minutes (switch AI off), how scope is established when prompts are not stored (time window + audit trail), what the privacy officer needs, and which test and CI rule would have prevented it (leakage test as a required check on any change under `ai/copilot`).
+Discussion points: which alert fires first (the canary within minutes; `RedactionStoppedWorking` as soon as traffic flows), what the on-call does in the first 10 minutes (switch AI off), how scope is established when prompts are not stored (time window + audit trail), what the privacy officer needs, and which test and CI rule would have prevented it (leakage test as a required check on any change under `ai/copilot`).
+
+The runnable version of this scenario is `incident/drill.py` (instructor guide: `incident/README.md`).

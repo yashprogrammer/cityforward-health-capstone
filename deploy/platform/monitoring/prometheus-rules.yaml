@@ -40,10 +40,15 @@ spec:
           expr: sum(increase(copilot_llm_cost_usd_total[24h])) > 25
           labels: {severity: warning}
           annotations: {summary: "More than $25 of model spend in 24 hours", description: "Check for a loop or a prompt that grew; see docs/cost-latency.md."}
-        - alert: RedactionStoppedWorking
-          expr: sum(increase(copilot_llm_calls_total[1h])) > 20 and sum(increase(copilot_redactions_total[1h])) == 0
+        - alert: RedactionCanaryFailed
+          expr: min(copilot_redaction_canary_ok) == 0
+          for: 2m
           labels: {severity: critical, hipaa: "164.514"}
-          annotations: {summary: "Model calls are being made but nothing is being redacted", description: "Stop sending PHI to the model provider until the redactor is verified."}
+          annotations: {summary: "The live gateway is letting a synthetic patient's identifiers through", description: "De-identification is not working in production. Switch the AI off (LLM_PROVIDER=offline) and follow the incident response plan playbook P1."}
+        - alert: RedactionStoppedWorking
+          expr: sum(increase(copilot_unredacted_calls_total[15m])) > 2
+          labels: {severity: critical, hipaa: "164.514"}
+          annotations: {summary: "Model calls are going out with nothing redacted", description: "Every patient prompt contains at least the patient's name, so an unredacted call means de-identification was skipped for it. Stop sending PHI to the model provider until the redactor is verified (playbook P1)."}
     - name: copilot-availability
       rules:
         - alert: CopilotDown

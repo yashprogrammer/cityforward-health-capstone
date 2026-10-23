@@ -17,6 +17,7 @@ os.environ.setdefault("COPILOT_DB_URL", "postgresql://copilot:copilot@localhost:
 os.environ["MEDITRACK_BASE_URL"] = "http://testserver"
 os.environ["LLM_PROVIDER"] = "offline"
 os.environ["EVENT_WORKER"] = "off"
+os.environ["CANARY_SECONDS"] = "0"
 
 from copilot.llm import Reply   # noqa: E402
 

@@ -71,6 +71,7 @@ class OpenAICompatible:
         self.name = f"{name}:{model}"
         self.model = model
         self.base_url, self.api_key = base_url, api_key
+        self.in_boundary = os.getenv("LLM_IN_BOUNDARY", "") == "1"      # the model runs inside the hospital boundary (vLLM in the VNet), so de-identification is optional
         self._chat = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0, timeout=timeout, max_retries=1)
 
     def chat(self, system: str, user: str) -> Reply:

@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ask as ask_mod
-from . import audit, breakglass, cds, coding_api, dashboard, db, discharge, events, priorauth_api, rag, summary, telemetry, usage
+from . import audit, breakglass, canary, cds, coding_api, dashboard, db, discharge, events, priorauth_api, rag, summary, telemetry, usage
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
     db.init_schema()
     telemetry.start_metrics_server()
     events.start_worker()
+    canary.start(rt.get_gateway)
     yield
     db.close_pool()
 

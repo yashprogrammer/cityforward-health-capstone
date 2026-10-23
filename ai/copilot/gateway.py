@@ -14,13 +14,18 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from . import audit, db, telemetry
-from .llm import Backend, LLMError, RoutedBackend, cost_usd, extract_json
+from .llm import Backend, LLMError, OpenAICompatible, RoutedBackend, cost_usd, extract_json
 
 T = TypeVar("T", bound=BaseModel)
 
 
 class Gateway:
     def __init__(self, backend: Backend | None, redactor=None, recorder=None, daily_budget_usd: float | None = None):
+        real = backend.default if isinstance(backend, RoutedBackend) else backend
+        if redactor is None and isinstance(real, OpenAICompatible) and not real.in_boundary:
+            # fail closed: the incident drill's root cause was a gateway wired up without its redactor. A real model client cannot be built that way
+            # unless an operator states the model runs inside the hospital boundary (LLM_IN_BOUNDARY=1).
+            raise ValueError("refusing to send prompts to a model client without de-identification; pass a redactor (or set LLM_IN_BOUNDARY=1 for a model inside the hospital boundary)")
         self.backend = backend
         self.redactor = redactor           # object with .apply_all(texts, patient_id=, context=)   (Build Session 4)
         self.recorder = recorder or self._record_db
@@ -35,6 +40,18 @@ class Gateway:
     @property
     def model(self) -> str:
         return self.backend.name if self.backend else "offline"
+
+    def prepare(self, system: str, user: str, patient_id=None, context=None):
+        """The exact text that leaves for the model: de-identified when a redactor is configured. Returns (system, user, restorer, redaction count)."""
+        if self.redactor is None:
+            return system, user, None, 0
+        (system, user), restorer, n = self.redactor.apply_all([system, user], patient_id=patient_id, context=context)
+        return system, user, restorer, n
+
+    def dry_run(self, system: str, user: str, patient_id=None, context=None) -> str:
+        """What WOULD be sent, without sending it. Used by the redaction canary to test the live wiring continuously."""
+        s, u, _, _ = self.prepare(system, user, patient_id, context)
+        return s + "\n" + u
 
     def _backend_for(self, purpose: str):
         return self.backend.for_purpose(purpose) if isinstance(self.backend, RoutedBackend) else self.backend
@@ -63,9 +80,7 @@ class Gateway:
             raise LLMError("no model configured")
         self._check_budget()
         backend = self._backend_for(purpose)
-        restorer, n_red = None, 0
-        if self.redactor is not None:
-            (system, user), restorer, n_red = self.redactor.apply_all([system, user], patient_id=patient_id, context=context)
+        system, user, restorer, n_red = self.prepare(system, user, patient_id, context)
         t0 = time.perf_counter()
         status, reply = "error", None
         span = telemetry.tracer().start_span("llm.call", attributes={"llm.purpose": purpose, "llm.model": backend.name, "llm.redactions": n_red})
