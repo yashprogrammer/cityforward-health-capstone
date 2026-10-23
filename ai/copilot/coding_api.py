@@ -43,9 +43,19 @@ def _save(r: dict, **ch) -> dict:
 
 @router.post("/patients/{patient_id}/coding", status_code=201)
 def create(patient_id: str, p: Principal = CurrentUser):
+    return create_for(p, patient_id)
+
+
+def open_worksheet(patient_id: str, encounter_id: str) -> dict | None:
+    with db.system() as c:
+        return c.execute("SELECT id FROM coding_worksheet WHERE patient_id=%s AND encounter_id=%s AND status='OPEN'", (patient_id, encounter_id)).fetchone()
+
+
+def create_for(p: Principal, patient_id: str, chart=None) -> dict:
+    """Used by the endpoint and by the event worker (as the SERVICE principal)."""
     authorize(p, "coding.suggest", about=patient_id)                      # role first (cheap), then the patient once we know the unit
     rt = _rt()
-    chart = load_chart(rt.get_fhir(), patient_id)
+    chart = chart or load_chart(rt.get_fhir(), patient_id)
     authorize(p, "coding.suggest", patient_id, unit=chart.unit)
     rag.index_chart(chart, p)
     w = coding.build_worksheet(rt.get_gateway(), chart, principal=p)

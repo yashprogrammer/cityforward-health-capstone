@@ -60,3 +60,10 @@ Three layers, so one mistake is not a breach: (1) `access.py` role matrix (who m
 IT/compliance roles entirely, limits a SMART-launched session to its one patient, and returns nothing when nobody says who is asking (fail closed).
 **Break-the-glass** (`breakglass.py`): a clinician outside their unit states a reason and gets 4 hours of access immediately; it is audited and queued for the privacy officer.
 Tokens: MediTrack's SMART tokens always; Keycloak SSO tokens when `KEYCLOAK_ISSUER` is set (`platform/keycloak`).
+
+## Event ingestion (Build Session 5)
+
+`events.py` receives MediTrack's signed CloudEvents: verify the HMAC over the raw body and the timestamp window first, store in `event_inbox` keyed by event id (duplicates are acknowledged,
+never reprocessed), answer 200 at once, and let a worker (`FOR UPDATE SKIP LOCKED`, several replicas are safe) re-sync from the FHIR API. Failures retry with backoff, then dead-letter; IT can replay.
+`encounter.discharge-advised` has drafts of the needed prior authorizations waiting for the humans; `encounter.discharged` queues the coding worksheet; `document.added` refreshes the index.
+Events our own filings cause are ignored (no loops), and the payload's `fhirBase` is never trusted.

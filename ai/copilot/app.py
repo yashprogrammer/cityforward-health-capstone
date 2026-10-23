@@ -7,7 +7,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from . import ask as ask_mod
-from . import audit, breakglass, cds, coding_api, db, priorauth_api, rag, summary
+from . import audit, breakglass, cds, coding_api, db, events, priorauth_api, rag, summary
 from .access import authorize
 from .auth import CurrentUser, Principal
 from .chart import load_chart
@@ -38,6 +38,7 @@ rt = Runtime()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_schema()
+    events.start_worker()
     yield
     db.close_pool()
 
@@ -46,6 +47,7 @@ app = FastAPI(title="CityForward Copilot", version="1.0", lifespan=lifespan)
 app.include_router(priorauth_api.router)
 app.include_router(coding_api.router)
 app.include_router(breakglass.router)
+app.include_router(events.router)
 
 
 def _chart(patient_id: str):

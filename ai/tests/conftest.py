@@ -16,6 +16,7 @@ os.environ.setdefault("MEDITRACK_HOTFOLDER", str(AI / "tests" / ".data" / "hotfo
 os.environ.setdefault("COPILOT_DB_URL", "postgresql://copilot:copilot@localhost:5432/copilot")
 os.environ["MEDITRACK_BASE_URL"] = "http://testserver"
 os.environ["LLM_PROVIDER"] = "offline"
+os.environ["EVENT_WORKER"] = "off"
 
 from copilot.llm import Reply   # noqa: E402
 

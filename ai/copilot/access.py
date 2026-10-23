@@ -19,9 +19,9 @@ ROLE_ACTIONS: dict[str, set[str]] = {
     "NURSE": {"index", "ask", "summary", "priorauth.view", "coding.view", "breakglass"},
     "PA_COORD": {"index", "ask", "summary", "priorauth.view", "priorauth.draft", "priorauth.edit", "priorauth.submit"},
     "HIM_CODER": {"index", "ask", "summary", "coding.view", "coding.suggest", "coding.decide"},
-    "IT_ADMIN": {"audit.view", "breakglass.review"},         # operates the platform and reviews access logs; sees no clinical content
+    "IT_ADMIN": {"audit.view", "breakglass.review", "events.view", "events.replay"},         # operates the platform and reviews access logs; sees no clinical content
     "COMPLIANCE": {"audit.view", "breakglass.review"},       # privacy officer (a Keycloak-issued role)
-    "SERVICE": {"index"},                                    # the webhook worker
+    "SERVICE": {"index", "priorauth.draft", "coding.suggest"},  # the event worker prepares drafts; humans review them
 }
 
 

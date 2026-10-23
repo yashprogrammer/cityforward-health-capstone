@@ -88,18 +88,31 @@ class DraftIn(BaseModel):
 
 @router.post("/patients/{patient_id}/prior-auth", status_code=201)
 def create_draft(patient_id: str, body: DraftIn, p: Principal = CurrentUser):
+    return create_draft_for(p, patient_id, body.service_code)
+
+
+OPEN_STATES = ("DRAFT", "APPROVED", "SUBMITTED", "QUEUED", "PENDED")
+
+
+def open_request(patient_id: str, service_code: str) -> dict | None:
+    with db.system() as c:
+        return c.execute("SELECT id FROM prior_auth WHERE patient_id=%s AND service_code=%s AND status = ANY(%s)", (patient_id, service_code, list(OPEN_STATES))).fetchone()
+
+
+def create_draft_for(p: Principal, patient_id: str, service_code: str, chart=None) -> dict:
+    """Used by the endpoint and by the event worker (as the SERVICE principal)."""
     authorize(p, "priorauth.draft", about=patient_id)                     # role first (cheap), then the patient once we know the unit
     rt = _rt()
-    chart = load_chart(rt.get_fhir(), patient_id)
+    chart = chart or load_chart(rt.get_fhir(), patient_id)
     authorize(p, "priorauth.draft", patient_id, unit=chart.unit)
     rag.index_chart(chart, p)       # the retrieval step needs a fresh index of this chart
     try:
-        rule = deps.get_payer().rule(body.service_code, chart.payer)
+        rule = deps.get_payer().rule(service_code, chart.payer)
     except PayerError as e:
         raise HTTPException(422 if e.status == 404 else 502, str(e)) from e
-    rule["code"] = body.service_code
+    rule["code"] = service_code
     if not rule.get("priorAuthRequired"):
-        raise HTTPException(409, f"{chart.payer or 'self-pay'} does not require prior authorization for {body.service_code}")
+        raise HTTPException(409, f"{chart.payer or 'self-pay'} does not require prior authorization for {service_code}")
     d = priorauth.draft_prior_auth(rt.get_gateway(), chart, rule, True, principal=p)
     pa_id = "PA-" + uuid.uuid4().hex[:10].upper()
     status = "DRAFT"
