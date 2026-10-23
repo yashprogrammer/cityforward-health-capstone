@@ -67,3 +67,8 @@ Tokens: MediTrack's SMART tokens always; Keycloak SSO tokens when `KEYCLOAK_ISSU
 never reprocessed), answer 200 at once, and let a worker (`FOR UPDATE SKIP LOCKED`, several replicas are safe) re-sync from the FHIR API. Failures retry with backoff, then dead-letter; IT can replay.
 `encounter.discharge-advised` has drafts of the needed prior authorizations waiting for the humans; `encounter.discharged` queues the coding worksheet; `document.added` refreshes the index.
 Events our own filings cause are ignored (no loops), and the payload's `fhirBase` is never trusted.
+
+## Evaluation
+
+`evalkit/` is the golden-set harness (see `evalkit/README.md`): automatic metrics plus a clinician review pack and release gates. Hybrid retrieval expands clinical synonyms (`rag.SYNONYMS`): the evaluation is what showed that
+"oxygen saturation" does not find "SpO2" with a lexical embedder.

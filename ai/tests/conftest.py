@@ -41,27 +41,13 @@ class ScriptedLLM:
 def meditrack():
     """The customer's EHR, seeded, running in-process; our backend client registered with it (what hospital IT does)."""
     import psycopg
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    import jwt
+    from evalkit.harness import meditrack_stack
     try:
         psycopg.connect(os.environ["MEDITRACK_DB_URL"], connect_timeout=3).close()
         psycopg.connect(os.environ["COPILOT_DB_URL"], connect_timeout=3).close()
     except psycopg.Error as e:   # pragma: no cover
         pytest.skip(f"PostgreSQL not reachable ({e})")
-    from fastapi.testclient import TestClient
-    from meditrack.backend.app import app
-    from meditrack.backend.seed import seed
-    seed()
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
-    jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key()))
-    jwk.update(kid="ai-backend-1", alg="RS256", use="sig")
-    with TestClient(app) as c:
-        r = c.post("/int/admin/smart/clients", json={"client_id": "cityforward-ai-backend", "name": "AI backend", "type": "BACKEND", "jwks": {"keys": [jwk]},
-                                                     "scopes": "system/*.read system/DocumentReference.write"})
-        assert r.status_code == 200, r.text
-        c.pem = pem
+    with meditrack_stack() as c:
         yield c
 
 

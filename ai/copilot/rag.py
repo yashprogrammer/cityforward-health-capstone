@@ -56,8 +56,28 @@ def index_chart(chart: Chart, principal=None) -> dict:
     return {"patient_id": chart.patient_id, "chunks": total, "added": len(new), "removed": len(stale)}
 
 
+# Clinicians write "SpO2", "LVEF", "ABG", "DAPT"; people ask for "oxygen saturation", "ejection fraction", "blood gas", "antiplatelet therapy".
+# Expanding the query with the other spelling is cheap, explainable, and beats hoping an embedding model knows every abbreviation.
+SYNONYMS = [
+    ("oxygen saturation", "SpO2 sat"), ("o2 sat", "SpO2 saturation"), ("room air", "RA"), ("ejection fraction", "LVEF EF echo"), ("blood gas", "ABG pH pCO2 pO2"),
+    ("blood pressure", "BP systolic diastolic"), ("heart rate", "HR pulse"), ("heart attack", "STEMI NSTEMI myocardial infarction MI"), ("myocardial infarction", "STEMI NSTEMI MI"),
+    ("antiplatelet", "aspirin ticagrelor clopidogrel prasugrel DAPT dual antiplatelet"), ("blood thinner", "anticoagulant heparin warfarin apixaban enoxaparin"),
+    ("anticoagulant", "heparin warfarin apixaban rivaroxaban enoxaparin"), ("shortness of breath", "dyspnea SOB"), ("dyspnea", "shortness of breath SOB"),
+    ("high blood pressure", "hypertension HTN"), ("diabetes", "DM A1c glucose"), ("kidney", "renal creatinine eGFR"), ("antibiotic", "azithromycin ceftriaxone vancomycin"),
+    ("allerg", "allergy allergies reaction"), ("walk", "ambulate ambulation gait"), ("stairs", "stair steps floor"), ("lung function", "FEV1 spirometry"),
+    ("cholesterol", "LDL lipid statin"), ("smok", "tobacco nicotine pack-years"), ("vaccin", "immunization pneumococcal influenza"), ("transfus", "packed red cells blood unit"),
+]
+
+
+def expand_query(q: str) -> str:
+    low = q.lower()
+    extra = [terms for key, terms in SYNONYMS if key in low]
+    return q + (" " + " ".join(extra) if extra else "")
+
+
 def search(patient_id: str, query: str, k: int = 8, principal=None, kinds: list[str] | None = None) -> list[Hit]:
     """Top-k chunks of ONE patient's chart for a question. Patient scoping is a hard filter, never a prompt instruction."""
+    query = expand_query(query)
     qv = get_embedder().embed([query])[0]
     kind_sql, kind_args = ("AND kind = ANY(%s)", [kinds]) if kinds else ("", [])
     pool_n = max(k * 4, 20)

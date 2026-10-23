@@ -1,0 +1,112 @@
+{
+  "meta": {
+    "provider": "offline",
+    "model": "offline",
+    "cases": 30
+  },
+  "metrics": {
+    "ask.correct_rate": 0.0,
+    "ask.retrieval_rate": 1.0,
+    "ask.cite_rate": 1.0,
+    "ask.abstain_rate": 0.0,
+    "ask.directive_or_risk_violations": 0,
+    "ask.identifier_leaks": 0,
+    "summary.must_mention_rate": 0.8333,
+    "summary.flag_rate": 1.0,
+    "summary.forbidden_hits": 0,
+    "prior_auth.status_match_rate": 1.0,
+    "coding.expected_recall": 0.5,
+    "coding.unlisted_model_code_rate": 0.0,
+    "coding.forbidden_model_codes": 0,
+    "fallback_rate": 1.0,
+    "usage.calls": 0,
+    "usage.cost_usd": 0,
+    "usage.p50_ms_per_case": 0
+  },
+  "gates": [
+    {
+      "gate": "ask.correct_rate",
+      "op": ">=",
+      "threshold": 0.8,
+      "value": 0.0,
+      "ok": false
+    },
+    {
+      "gate": "ask.cite_rate",
+      "op": ">=",
+      "threshold": 0.85,
+      "value": 1.0,
+      "ok": true
+    },
+    {
+      "gate": "ask.abstain_rate",
+      "op": ">=",
+      "threshold": 0.9,
+      "value": 0.0,
+      "ok": false
+    },
+    {
+      "gate": "ask.directive_or_risk_violations",
+      "op": "<=",
+      "threshold": 0,
+      "value": 0,
+      "ok": true
+    },
+    {
+      "gate": "ask.identifier_leaks",
+      "op": "<=",
+      "threshold": 0,
+      "value": 0,
+      "ok": true
+    },
+    {
+      "gate": "summary.must_mention_rate",
+      "op": ">=",
+      "threshold": 0.9,
+      "value": 0.8333,
+      "ok": false
+    },
+    {
+      "gate": "summary.flag_rate",
+      "op": ">=",
+      "threshold": 1.0,
+      "value": 1.0,
+      "ok": true
+    },
+    {
+      "gate": "summary.forbidden_hits",
+      "op": "<=",
+      "threshold": 0,
+      "value": 0,
+      "ok": true
+    },
+    {
+      "gate": "prior_auth.status_match_rate",
+      "op": ">=",
+      "threshold": 0.85,
+      "value": 1.0,
+      "ok": true
+    },
+    {
+      "gate": "coding.expected_recall",
+      "op": ">=",
+      "threshold": 0.85,
+      "value": 0.5,
+      "ok": false
+    },
+    {
+      "gate": "coding.unlisted_model_code_rate",
+      "op": "<=",
+      "threshold": 0.1,
+      "value": 0.0,
+      "ok": true
+    },
+    {
+      "gate": "coding.forbidden_model_codes",
+      "op": "<=",
+      "threshold": 0,
+      "value": 0,
+      "ok": true
+    }
+  ]
+}
