@@ -121,7 +121,8 @@ class Chart(BaseModel):
 
     @property
     def as_of(self) -> str:
-        ds = [e.start for e in self.encounters] + [d.date for d in self.documents] + [o.date for o in self.observations]
+        # documents this service filed carry the real wall-clock date and would drag the demo chart's "today" forward
+        ds = [e.start for e in self.encounters] + [d.date for d in self.documents if not d.generated] + [o.date for o in self.observations]
         return max(ds)[:10]
 
     @property
