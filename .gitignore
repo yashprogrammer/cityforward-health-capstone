@@ -13,6 +13,12 @@ ai/data/
 .terraform/
 *.tfstate
 *.tfstate.backup
+*.tfvars
+*.tfvars.json
+*.tfplan
+*.tfstate.*
+kubeconfig
+kubeconfig.*
 .azure/
 .data/
 linkerd-certs/
