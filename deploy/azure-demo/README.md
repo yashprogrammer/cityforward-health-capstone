@@ -5,7 +5,8 @@
 - Work on this repository's `integrated` branch. CityCare provides lessons only.
 - Development first: local kind validation, then a short Azure validation and verified teardown.
 - Use Microsoft Foundry. Do not use Groq or either existing `gpt-4.1-mini` deployment without a new selection.
-- Subscription: `Databricks_live` (selected by the owner). The model, region, credit/spending-limit status and budget-alert email are pending.
+- Subscription: `Databricks_live` (selected by the owner). ARM reports `PayAsYouGo_2014-09-01` and `spendingLimit=Off`; remaining promotional credits are unverified. Budget-alert email is pending.
+- Model/region selected after the owner delegated the choice: **Foundry `gpt-oss-120b`, version `1`, Global Standard, East US 2**. This preserves the course's open-weight model approach and the existing Terraform region. It is a development baseline, not a measured quality winner. Validate it against the capstone's safety and grounding cases before finalizing the course.
 - Proposed Azure validation budget: **US$5**. This is not authorization to spend. Obtain approval with a concrete estimate before paid calls, cloud creation, start, apply or destroy. A Cost Management budget sends alerts; it is not a hard spending cap.
 - Course outlining and recording happen after development is finalized; no recording or rehearsal date is scheduled.
 - Only synthetic data. Keep de-identification, grounding, CDS lint, RLS, human sign-off and audit controls intact.
@@ -64,8 +65,17 @@ The kind profile uses MediTrack's own SMART authorization server with empty Keyc
 
 - **Not run:** kind bootstrap, kind dashboard flow, in-cluster OTel/Prometheus, live alert firing/clearing, Foundry inference, Terraform init/validate/plan/apply, cloud rehearsal or teardown.
 - No cloud resources were created, changed or deleted; no billable model calls were made. Added Azure spend from this work: **US$0**. Existing subscription spend and burn rate were not queried and are not claimed to be zero.
-- Next input: Foundry model and preferred region; whether the subscription has credits or a spending limit. Then prepare the configuration and a bounded test-cost estimate for approval.
+- Next work: prepare the selected Foundry configuration and enforceable test limits, then request approval for a bounded paid validation. The model/region choice is settled; it does not authorize resource creation or inference spending.
 - For later AKS planning: admin identity, authorized public IP, owner/delete-after tags and budget-alert email remain required. Provider registration and any paid operation require the owner's approval.
 - Before any cloud apply, implement and review the complete down path and verify the estimate fits the agreed budget. Do not deploy the unchanged hospital defaults as a cheap demo.
 
 Repository changes at this checkpoint: this report and ignore rules for real tfvars, saved plans/state variants and kubeconfigs. No application, chart, Terraform or bootstrap source behavior changed.
+
+## Foundry selection evidence — 2026-10-26
+
+- Read-only ARM model inventory lists `gpt-oss-120b` version `1` with GlobalStandard in East US 2 and South India. It also lists `gpt-oss-20b` now; the older CityCare deployment limitation must not be treated as current availability evidence.
+- `az cognitiveservices usage list --location eastus2`: `AIServices.GlobalStandard.gpt-oss-120b` has current usage 50 and limit 5000 in the API's quota units. This confirms quota headroom, not successful deployment or guaranteed live capacity.
+- [Azure Retail Prices API](https://prices.azure.com/api/retail/prices?$filter=productName%20eq%20%27Azure%20OpenAI%20OSS%20Models%27%20and%20armRegionName%20eq%20%27eastus2%27): Global Standard input meter `gpt-oss-120B Inp glbl Tokens` is US$0.00015/1K tokens; output meter `gpt-oss-120B Outp glbl Tokens` is US$0.0006/1K tokens. That is **US$0.15 input / US$0.60 output per million tokens**, excluding tax. This is inference pricing, not the unrelated hourly fine-tuning meters.
+- Illustrative token envelope: 100 calls with 5,000 billable input and 1,000 billable output tokens each cost **US$0.135**. Actual usage, including billed reasoning tokens, must be measured; this is not an observed capstone run or an enforced limit. Reserve at most US$0.50 of the overall US$5 for initial model validation, subject to explicit approval and implemented limits.
+- Global Standard is pay-per-token, with no provisioned GPU/throughput commitment selected. [Global processing may happen outside the resource region](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability); East US 2 does not imply US-only inference. Synthetic data and the de-identification gateway remain required.
+- No deployment was created and no inference call was made for this selection. Existing Foundry accounts/deployments remain untouched.
