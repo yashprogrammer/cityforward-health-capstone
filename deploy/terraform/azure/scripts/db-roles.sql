@@ -11,3 +11,8 @@ ALTER DATABASE copilot OWNER TO copilot;
 \connect copilot
 CREATE EXTENSION IF NOT EXISTS vector;      -- allow-listed by azure.extensions=VECTOR in main.tf; the application role is NOT a superuser, so row-level security applies to it
 CREATE EXTENSION IF NOT EXISTS pgaudit;     -- statement-level audit (pgaudit.log is set server-wide in main.tf); logs flow to Log Analytics via the PostgreSQL diagnostic setting
+-- PostgreSQL 15+ no longer lets ordinary roles create objects in "public", and on Azure that schema belongs to azure_pg_admin, not to the database owner.
+-- Without this the Copilot dies at startup with "permission denied for schema public" (found on the first Azure deploy).
+GRANT USAGE, CREATE ON SCHEMA public TO copilot;
+\connect meditrack
+GRANT USAGE, CREATE ON SCHEMA public TO meditrack;
