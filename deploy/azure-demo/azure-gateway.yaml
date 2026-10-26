@@ -1,0 +1,66 @@
+# Same-origin front door for the Azure demo: MediTrack on / and the Copilot on /ai. Replaces ingress-nginx (retired).
+# demo.sh substitutes __IMAGE__ and __SOURCE_RANGE__ (your public IP /32): the Service is public only to you.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway
+  labels: {pod-security.kubernetes.io/enforce: restricted}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: gateway, namespace: gateway}
+data:
+  Caddyfile: |
+    {
+      admin off
+      auto_https off
+    }
+    :8080 {
+      handle /gateway-healthz {
+        respond "ok" 200
+      }
+      handle_path /ai/* {
+        reverse_proxy copilot.cityforward.svc.cluster.local:8080
+      }
+      handle {
+        reverse_proxy meditrack.cityforward.svc.cluster.local:8001
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: gateway, namespace: gateway}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: gateway}}
+  template:
+    metadata: {labels: {app: gateway}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: gateway
+          image: __IMAGE__
+          ports: [{name: http, containerPort: 8080}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {cpu: 250m, memory: 128Mi}}
+          readinessProbe: {httpGet: {path: /gateway-healthz, port: http}}
+          livenessProbe: {httpGet: {path: /gateway-healthz, port: http}}
+          volumeMounts:
+            - {name: config, mountPath: /etc/caddy, readOnly: true}
+            - {name: state, mountPath: /config}
+            - {name: data, mountPath: /data}
+      volumes:
+        - {name: config, configMap: {name: gateway}}
+        - {name: state, emptyDir: {}}
+        - {name: data, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: gateway, namespace: gateway}
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  loadBalancerSourceRanges: ["__SOURCE_RANGE__"]
+  selector: {app: gateway}
+  ports: [{name: http, port: 80, targetPort: http}]

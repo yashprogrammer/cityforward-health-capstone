@@ -119,9 +119,9 @@ resource "azurerm_container_registry" "main" {
   name                          = "${var.name}acr${random_string.suffix.result}"
   resource_group_name           = azurerm_resource_group.main.name
   location                      = azurerm_resource_group.main.location
-  sku                           = "Premium" # private endpoints, content trust, geo-replication
+  sku                           = var.acr_sku # Premium: private endpoints, content trust, geo-replication
   admin_enabled                 = false
-  public_network_access_enabled = false
+  public_network_access_enabled = var.acr_public_network_access
   tags                          = local.tags
 }
 
@@ -131,11 +131,11 @@ resource "azurerm_key_vault" "main" {
   location                      = azurerm_resource_group.main.location
   resource_group_name           = azurerm_resource_group.main.name
   tenant_id                     = data.azurerm_client_config.current.tenant_id
-  sku_name                      = "premium" # HSM-backed keys
-  enable_rbac_authorization     = true
-  purge_protection_enabled      = true
-  soft_delete_retention_days    = 90
-  public_network_access_enabled = false
+  sku_name                      = var.key_vault_sku # premium: HSM-backed keys
+  rbac_authorization_enabled    = true
+  purge_protection_enabled      = var.key_vault_purge_protection
+  soft_delete_retention_days    = var.key_vault_soft_delete_days
+  public_network_access_enabled = var.key_vault_public_network_access
   tags                          = local.tags
 }
 
@@ -167,14 +167,14 @@ resource "azurerm_postgresql_flexible_server" "main" {
   location                      = azurerm_resource_group.main.location
   version                       = "16"
   sku_name                      = var.postgres_sku
-  storage_mb                    = 131072
+  storage_mb                    = var.postgres_storage_mb
   delegated_subnet_id           = azurerm_subnet.data.id
   private_dns_zone_id           = azurerm_private_dns_zone.postgres.id
   public_network_access_enabled = false
   administrator_login           = "cfadmin"
   administrator_password        = random_password.postgres_admin.result
-  backup_retention_days         = 35
-  geo_redundant_backup_enabled  = true
+  backup_retention_days         = var.postgres_backup_retention_days
+  geo_redundant_backup_enabled  = var.postgres_geo_redundant_backup
   tags                          = local.tags
 
   dynamic "high_availability" {
@@ -240,6 +240,7 @@ resource "azurerm_postgresql_flexible_server_database" "copilot" {
 
 # ---------------------------------------------------------------- hot folder storage (Azure Files over a private endpoint)
 resource "azurerm_storage_account" "files" {
+  count                             = var.enable_files_storage ? 1 : 0
   name                              = "${var.name}files${random_string.suffix.result}"
   resource_group_name               = azurerm_resource_group.main.name
   location                          = azurerm_resource_group.main.location
@@ -254,8 +255,9 @@ resource "azurerm_storage_account" "files" {
 }
 
 resource "azurerm_storage_share" "hotfolder" {
+  count              = var.enable_files_storage ? 1 : 0
   name               = "meditrack-data"
-  storage_account_id = azurerm_storage_account.files.id
+  storage_account_id = azurerm_storage_account.files[0].id
   quota              = 100
   enabled_protocol   = "SMB"
 }
@@ -275,10 +277,10 @@ resource "azurerm_kubernetes_cluster" "main" {
   dns_prefix                        = local.prefix
   kubernetes_version                = null # latest supported; pin in production and upgrade on a schedule
   private_cluster_enabled           = var.private_cluster
-  sku_tier                          = "Standard"
+  sku_tier                          = var.aks_sku_tier
   oidc_issuer_enabled               = true
   workload_identity_enabled         = true
-  azure_policy_enabled              = true
+  azure_policy_enabled              = var.enable_azure_policy
   local_account_disabled            = true
   role_based_access_control_enabled = true
   automatic_upgrade_channel         = "patch"
@@ -299,9 +301,9 @@ resource "azurerm_kubernetes_cluster" "main" {
     vm_size                      = var.node_vm_size
     node_count                   = var.node_count
     vnet_subnet_id               = azurerm_subnet.aks.id
-    zones                        = ["1", "2", "3"]
+    zones                        = var.aks_zones
     only_critical_addons_enabled = false
-    os_disk_type                 = "Ephemeral"
+    os_disk_type                 = var.aks_os_disk_type
     temporary_name_for_rotation  = "tmp"
     upgrade_settings {
       max_surge = "33%"
@@ -328,14 +330,27 @@ resource "azurerm_kubernetes_cluster" "main" {
     secret_rotation_enabled = true
   }
 
-  microsoft_defender {
-    log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+  dynamic "microsoft_defender" {
+    for_each = var.enable_defender ? [1] : []
+    content {
+      log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+    }
   }
 
-  oms_agent {
-    log_analytics_workspace_id      = azurerm_log_analytics_workspace.main.id
-    msi_auth_for_monitoring_enabled = true
+  dynamic "oms_agent" {
+    for_each = var.enable_container_insights ? [1] : []
+    content {
+      log_analytics_workspace_id      = azurerm_log_analytics_workspace.main.id
+      msi_auth_for_monitoring_enabled = true
+    }
   }
+}
+
+resource "azurerm_role_assignment" "cluster_admins" {
+  for_each             = toset(var.cluster_admin_object_ids)
+  scope                = azurerm_kubernetes_cluster.main.id
+  role_definition_name = "Azure Kubernetes Service RBAC Cluster Admin"
+  principal_id         = each.value
 }
 
 resource "azurerm_role_assignment" "aks_acr_pull" {
@@ -372,6 +387,13 @@ resource "azurerm_key_vault_secret" "meditrack_url" {
   name         = "meditrack-url"
   key_vault_id = azurerm_key_vault.main.id
   value        = "postgresql://meditrack:${random_password.meditrack_db.result}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/meditrack?sslmode=require"
+  depends_on   = [azurerm_role_assignment.deployer_kv]
+}
+
+resource "azurerm_key_vault_secret" "postgres_admin_password" {
+  name         = "postgres-admin-password"
+  key_vault_id = azurerm_key_vault.main.id
+  value        = random_password.postgres_admin.result
   depends_on   = [azurerm_role_assignment.deployer_kv]
 }
 

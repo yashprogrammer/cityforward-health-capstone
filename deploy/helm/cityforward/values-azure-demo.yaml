@@ -1,0 +1,22 @@
+# Layer over values-aks.yaml for the short-lived Azure demo (see deploy/azure-demo/README.md). Synthetic data only.
+# Image repositories, Key Vault name, tenant, workload-identity client id and meditrack.publicBaseUrl are --set by deploy/azure-demo/demo.sh.
+images:
+  customer: {tag: demo}
+  ai: {tag: demo}
+ingress: {enabled: false}              # ingress-nginx is retired; a Caddy gateway in its own namespace fronts the cluster (azure-gateway.yaml)
+meditrack:
+  replicas: 1
+  persistence: {size: 5Gi, storageClass: managed-csi, accessMode: ReadWriteOnce}
+copilot:
+  replicas: 1
+  hpa: {enabled: false}
+  embedder: hash
+  dailyBudgetUsd: 0.25
+  llm: {provider: foundry, model: gpt-oss-120b, baseUrl: "", baseUrlSecretKey: base-url, maxOutputTokens: 4096}
+  keycloak: {issuer: "", internalUrl: "", audience: cityforward-ai}     # MediTrack's own SMART server, as on kind
+  otel: {endpoint: ""}
+networkPolicy:
+  enabled: true                        # Cilium enforces it on AKS
+  ingressNamespace: gateway
+  llmEgressCidrs: ["0.0.0.0/0"]        # the Foundry endpoint is public in the demo; also covers PostgreSQL on 5432 inside the VNet
+serviceMonitor: {enabled: false}

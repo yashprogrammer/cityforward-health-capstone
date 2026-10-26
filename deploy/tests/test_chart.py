@@ -175,3 +175,43 @@ def test_foundry_development_budget_and_endpoint_are_wired():
     assert env["LLM_MAX_OUTPUT_TOKENS"]["value"] == "4096"
     assert env["LLM_BASE_URL"]["valueFrom"]["secretKeyRef"] == {"name": "cityforward-llm", "key": "base-url"}
     assert env["LLM_API_KEY"]["valueFrom"]["secretKeyRef"]["key"] == "api-key"
+
+
+# ------------------------------------------------------------------ Azure demo overlay (values-aks.yaml + values-azure-demo.yaml)
+def render_azure_demo() -> list[dict]:
+    args = ["template", "t", str(CHART), "-f", str(CHART / "values-aks.yaml"), "-f", str(CHART / "values-azure-demo.yaml"), "--namespace", "cityforward",
+            "--set", "images.customer.repository=x.azurecr.io/cf-customer", "--set", "images.ai.repository=x.azurecr.io/cf-ai",
+            "--set", "keyVault.name=kv-x", "--set", "keyVault.tenantId=t", "--set", "keyVault.workloadIdentityClientId=c", "--set", "meditrack.publicBaseUrl=http://203.0.113.7"]
+    return [d for d in yaml.safe_load_all(helm(*args)) if d]
+
+
+def test_azure_demo_overlay_keeps_the_security_posture_and_takes_secrets_from_key_vault():
+    docs = render_azure_demo()
+    assert not kinds(docs, "Ingress"), "the demo is fronted by the gateway, not by the retired ingress-nginx"
+    assert not kinds(docs, "StatefulSet"), "no in-cluster Postgres on Azure"
+    policies = {p["metadata"]["name"]: p for p in kinds(docs, "NetworkPolicy")}
+    assert {"default-deny", "ingress-to-apps"} <= set(policies)
+    ingress_from = policies["ingress-to-apps"]["spec"]["ingress"][0]["from"][0]["namespaceSelector"]["matchLabels"]
+    assert ingress_from == {"kubernetes.io/metadata.name": "gateway"}
+    copilot = next(d for d in kinds(docs, "Deployment") if d["metadata"]["name"] == "copilot")
+    c = copilot["spec"]["template"]["spec"]["containers"][0]
+    env = {e["name"]: e for e in c["env"]}
+    assert c["image"] == "x.azurecr.io/cf-ai:demo"
+    assert env["LLM_PROVIDER"]["value"] == "foundry" and env["COPILOT_DAILY_BUDGET_USD"]["value"] == "0.25"
+    for name in ("LLM_API_KEY", "LLM_BASE_URL", "COPILOT_DB_URL"):       # credentials and endpoints come from Secrets, never from chart values
+        assert "valueFrom" in env[name], name
+    assert next(d for d in kinds(docs, "PersistentVolumeClaim"))["spec"]["storageClassName"] == "managed-csi"
+    spc = kinds(docs, "SecretProviderClass")[0]["spec"]
+    assert "llm-base-url" in spc["parameters"]["objects"] and "ai-backend-key" in spc["parameters"]["objects"]
+    for d in kinds(docs, "Deployment"):
+        assert d["spec"]["template"]["spec"]["securityContext"]["runAsNonRoot"] is True, d["metadata"]["name"]
+
+
+def test_azure_gateway_is_restricted_to_one_address_and_runs_non_root():
+    docs = [d for d in yaml.safe_load_all((CHART.parents[1] / "azure-demo" / "azure-gateway.yaml").read_text()) if d]
+    svc = next(d for d in docs if d["kind"] == "Service")
+    assert svc["spec"]["type"] == "LoadBalancer" and svc["spec"]["loadBalancerSourceRanges"] == ["__SOURCE_RANGE__"]
+    dep = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+    assert dep["securityContext"]["runAsNonRoot"] is True and dep["automountServiceAccountToken"] is False
+    ns = next(d for d in docs if d["kind"] == "Namespace")
+    assert ns["metadata"]["labels"]["pod-security.kubernetes.io/enforce"] == "restricted"

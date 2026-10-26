@@ -94,3 +94,34 @@ Run with `CF_LOCAL_DEMO=1 deploy/kind/bootstrap.sh`, then `deploy/azure-demo/pla
 | Deployment tests | 30 passed (`deploy/tests`) |
 
 Not run: alert firing/clearing, Coding and Prior authorization with the live model, `ai/tests` (deps missing on host), any Terraform or AKS step.
+
+## Alert drill on kind — 2026-10-26
+
+`python deploy/azure-demo/alert_drill.py --kube-context kind-cityforward --kubeconfig .data/kubeconfig-kind --namespace cityforward --base-url http://localhost:8081 --prometheus-port 19090 denials down`
+
+Every connection is an explicit argument; the drill refuses non-`kind-` contexts and a Prometheus that already has active alerts. Real signals only, no safety control weakened, no model called.
+
+| Alert | Signal | Fired | Cleared |
+|---|---|---|---|
+| `UnusualAccessDenials` | 40 requests as `it.admin` (IT_ADMIN), each refused 403 | 20 s after the traffic (41.3 denials in the 10 min window) | 601 s after firing (window slid past) |
+| `CopilotDown` | copilot scaled to 0 | 321 s after the outage (rule `for: 5m`) | 40 s after scale-up |
+
+Finding: a counter series that first appears already at N has no earlier sample, so `increase()` reports 0. The first denials for a new label pair are invisible to `UnusualAccessDenials`; the first run (no priming) never fired. The drill now sends one request, waits a scrape, then the burst. Alertmanager is disabled in this profile: Prometheus state only, no notification delivered. `RedactionCanaryFailed` / `RedactionStoppedWorking` are not drilled live (they need the gateway running without its redactor); `incident.drill` covers that logic in-process.
+
+## Azure demo profile — prepared, NOT applied
+
+`deploy/azure-demo/demo.sh plan | providers | up | smoke | stop | start | down | status`. Anything that changes cloud resources needs `CF_APPROVED=yes` on that command.
+
+| Piece | File |
+|---|---|
+| Cost/posture overrides (hospital defaults unchanged; new variables default to the old behaviour) | `demo.tfvars`, `deploy/terraform/azure/variables.tf` |
+| Chart overlay, same-origin gateway (Caddy, public only to your /32) | `deploy/helm/cityforward/values-azure-demo.yaml`, `azure-gateway.yaml` |
+| Key Vault population, DB roles from inside the cluster, smoke test | `azure_secrets.py`, `azure_db_roles.py` (+ idempotent `db-roles.sql`), `smoke.py` |
+
+Verified: `terraform validate` passes; `plan` = **37 to add, 0 to change, 0 to destroy** (read-only, nothing created); 32 deployment tests pass; `smoke.py` 8/8 against the kind stack. **Not run:** apply, image builds in ACR, Key Vault CSI sync, DB role job, `helm upgrade` on AKS, `stop/start`, `down`, `kubelogin` flow.
+
+Environment findings that shaped the profile: this subscription has **no quota or access to the v5/v6/B-v2 VM families** in eastus2 (D2s_v5 is `NotAvailableForSubscription`); `Standard_D2as_v7` is available with 10 vCPU quota and lists at 0.0908 USD/h. `Microsoft.ContainerService` and `Microsoft.PolicyInsights` are not registered. `kubelogin` is not installed (cluster local accounts are disabled).
+
+Defects found in the hospital-default Terraform: Key Vault and ACR have public access off but **no private endpoints are defined**, so the cluster could not reach them; the chart's `llmEgressCidrs` comment points at the data subnet, not a model endpoint. The demo profile sidesteps the first by enabling public access with RBAC only; the production story still needs the private endpoints.
+
+Estimated burn while running (nodes verified from the retail price API, the rest estimated): about 0.26 USD/h, roughly 1 USD for a 4-hour session.

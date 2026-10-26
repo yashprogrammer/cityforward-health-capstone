@@ -68,6 +68,7 @@ keyVault:
     - {name: copilot-webhook-secret, secret: cityforward-webhook, key: secret}
     - {name: payer-api-key, secret: cityforward-payer, key: api-key}
     - {name: llm-api-key, secret: cityforward-llm, key: api-key}
+    - {name: llm-base-url, secret: cityforward-llm, key: base-url}     # only read when copilot.llm.baseUrlSecretKey is set
     - {name: ai-backend-key, secret: cityforward-ai-keys, key: ai-backend.pem}
     - {name: meditrack-signing-key, secret: cityforward-meditrack-signing, key: pem}
 
