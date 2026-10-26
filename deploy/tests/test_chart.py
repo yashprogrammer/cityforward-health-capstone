@@ -165,3 +165,13 @@ def test_key_vault_sync_covers_every_secret_the_workloads_reference():
 def test_no_key_vault_objects_on_kind():
     docs = render("values-kind.yaml")
     assert not [d for d in docs if d["kind"] == "SecretProviderClass"]
+
+
+def test_foundry_development_budget_and_endpoint_are_wired():
+    docs = render("values-kind.yaml", "copilot.llm.provider=foundry", "copilot.llm.model=gpt-oss-120b", "copilot.llm.baseUrlSecretKey=base-url", "copilot.dailyBudgetUsd=0.25", "copilot.llm.maxOutputTokens=4096")
+    dep = next(d for d in kinds(docs, "Deployment") if d["metadata"]["name"] == "copilot")
+    env = {e["name"]: e for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["COPILOT_DAILY_BUDGET_USD"]["value"] == "0.25"
+    assert env["LLM_MAX_OUTPUT_TOKENS"]["value"] == "4096"
+    assert env["LLM_BASE_URL"]["valueFrom"]["secretKeyRef"] == {"name": "cityforward-llm", "key": "base-url"}
+    assert env["LLM_API_KEY"]["valueFrom"]["secretKeyRef"]["key"] == "api-key"

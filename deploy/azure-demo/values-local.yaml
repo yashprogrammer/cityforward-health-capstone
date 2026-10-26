@@ -1,0 +1,12 @@
+# Layer over values-kind.yaml. Foundry is enabled only for an explicitly approved run.
+ingress: {enabled: false}
+copilot:
+  replicas: 1
+  embedder: hash
+  dailyBudgetUsd: 0.25
+  llm:
+    provider: offline
+    model: gpt-oss-120b
+    maxOutputTokens: 4096
+  otel: {endpoint: "http://otel-collector.observability:4318"}
+  hpa: {enabled: false}

@@ -61,7 +61,13 @@ spec:
             - {name: EMBEDDER, value: {{ .Values.copilot.embedder | quote }}}
             - {name: LLM_PROVIDER, value: {{ .Values.copilot.llm.provider | quote }}}
             - {name: LLM_MODEL, value: {{ .Values.copilot.llm.model | quote }}}
-            {{- if .Values.copilot.llm.baseUrl }}
+            - {name: COPILOT_DAILY_BUDGET_USD, value: {{ .Values.copilot.dailyBudgetUsd | quote }}}
+            {{- if .Values.copilot.llm.maxOutputTokens }}
+            - {name: LLM_MAX_OUTPUT_TOKENS, value: {{ .Values.copilot.llm.maxOutputTokens | quote }}}
+            {{- end }}
+            {{- if .Values.copilot.llm.baseUrlSecretKey }}
+            - {name: LLM_BASE_URL, valueFrom: {secretKeyRef: {name: {{ .Values.copilot.llm.secretName }}, key: {{ .Values.copilot.llm.baseUrlSecretKey }}}}}
+            {{- else if .Values.copilot.llm.baseUrl }}
             - {name: LLM_BASE_URL, value: {{ .Values.copilot.llm.baseUrl | quote }}}
             {{- end }}
             {{- if ne .Values.copilot.llm.provider "offline" }}

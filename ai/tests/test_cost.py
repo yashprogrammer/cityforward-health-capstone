@@ -29,6 +29,7 @@ def good(chart):
 def test_prices_are_per_million_tokens():
     assert cost_usd("openai/gpt-oss-20b", 1_000_000, 1_000_000) == pytest.approx(0.075 + 0.30)
     assert cost_usd("unknown:model", 0, 0) == 0
+    assert cost_usd("foundry:gpt-oss-120b", 1_000_000, 1_000_000) == pytest.approx(0.75)
 
 
 def test_summary_cache_saves_the_second_model_call(hale_chart):

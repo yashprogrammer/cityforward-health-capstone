@@ -4,9 +4,10 @@ Needs the stack running behind one origin (docker compose up, or the three proce
     python ai/e2e/smoke.py ./shots [chromium-path]
 """
 import sys
+import os
 from playwright.sync_api import sync_playwright
 S = sys.argv[1]
-BASE = "http://localhost:8001"
+BASE = os.environ.get("CITYFORWARD_BASE_URL", "http://localhost:8001").rstrip("/")
 with sync_playwright() as p:
     b = p.chromium.launch(**({"executable_path": sys.argv[2]} if len(sys.argv) > 2 else {}), args=["--no-sandbox"])
     pg = b.new_page(viewport={"width": 1360, "height": 900})

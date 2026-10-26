@@ -79,3 +79,18 @@ Repository changes at this checkpoint: this report and ignore rules for real tfv
 - Illustrative token envelope: 100 calls with 5,000 billable input and 1,000 billable output tokens each cost **US$0.135**. Actual usage, including billed reasoning tokens, must be measured; this is not an observed capstone run or an enforced limit. Reserve at most US$0.50 of the overall US$5 for initial model validation, subject to explicit approval and implemented limits.
 - Global Standard is pay-per-token, with no provisioned GPU/throughput commitment selected. [Global processing may happen outside the resource region](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability); East US 2 does not imply US-only inference. Synthetic data and the de-identification gateway remain required.
 - No deployment was created and no inference call was made for this selection. Existing Foundry accounts/deployments remain untouched.
+
+## Local kind validation — 2026-10-26
+
+Run with `CF_LOCAL_DEMO=1 deploy/kind/bootstrap.sh`, then `deploy/azure-demo/platform.sh` (OTel Collector + kube-prometheus-stack).
+
+| Check | Observed |
+|---|---|
+| Gateway | Caddy (rootless, `setcap -r`, port 8080) replaces retired ingress-nginx; MediTrack `/` and `/ai/` answer on `localhost:8081`; pods run with drop-ALL |
+| Platform | Collector Running (Jaeger exporter neutralised in `otel-local.yaml`); Prometheus scrapes `copilot-metrics` (up); 3 rule groups loaded |
+| Foundry | `gpt-oss-120b` called from the cluster via a Secret applied over stdin; 5 calls, about US$0.007 by the app's own price table (not Azure billing; Cost Management lags) |
+| Ask the chart | `mode=llm`, grounded, correct ("twice daily") |
+| Summary | Fell back to the template **twice**: model wrote "day 0", a number absent from the cited evidence. Grounding behaved as designed; this is a model-quality finding to weigh, not a bug to bypass |
+| Deployment tests | 30 passed (`deploy/tests`) |
+
+Not run: alert firing/clearing, Coding and Prior authorization with the live model, `ai/tests` (deps missing on host), any Terraform or AKS step.

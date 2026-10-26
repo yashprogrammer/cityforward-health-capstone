@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+.data
+.venv
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+**/.terraform
+**/*.tfvars
+**/*.tfstate*
+**/kubeconfig*
+shots
+results
+ai/tests/.data
