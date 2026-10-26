@@ -1,5 +1,5 @@
 # Same-origin front door for the Azure demo: MediTrack on / and the Copilot on /ai. Replaces ingress-nginx (retired).
-# demo.sh substitutes __IMAGE__ and __SOURCE_RANGE__ (your public IP /32): the Service is public only to you.
+# demo.sh substitutes __IMAGE__, __HOST__ (the gateway's public IP) and __SOURCE_RANGE__ (your public IP /32): the Service is public only to you.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -13,12 +13,20 @@ data:
   Caddyfile: |
     {
       admin off
-      auto_https off
+      auto_https disable_redirects
+      skip_install_trust
+      default_sni __HOST__
     }
+    # In-cluster health only (the Service does not expose this port).
     :8080 {
       handle /gateway-healthz {
         respond "ok" 200
       }
+    }
+    # Browsers only give pages crypto.subtle (needed for the SMART PKCE sign-in) over HTTPS or localhost. A public IP cannot get a public
+    # certificate, so Caddy signs one with its own CA: the browser warns once; click through for the demo.
+    https://__HOST__:8443 {
+      tls internal
       handle_path /ai/* {
         reverse_proxy copilot.cityforward.svc.cluster.local:8080
       }
@@ -41,11 +49,11 @@ spec:
       containers:
         - name: gateway
           image: __IMAGE__
-          ports: [{name: http, containerPort: 8080}]
+          ports: [{name: health, containerPort: 8080}, {name: https, containerPort: 8443}]
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
           resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {cpu: 250m, memory: 128Mi}}
-          readinessProbe: {httpGet: {path: /gateway-healthz, port: http}}
-          livenessProbe: {httpGet: {path: /gateway-healthz, port: http}}
+          readinessProbe: {httpGet: {path: /gateway-healthz, port: health}}
+          livenessProbe: {httpGet: {path: /gateway-healthz, port: health}}
           volumeMounts:
             - {name: config, mountPath: /etc/caddy, readOnly: true}
             - {name: state, mountPath: /config}
@@ -63,4 +71,4 @@ spec:
   externalTrafficPolicy: Local
   loadBalancerSourceRanges: ["__SOURCE_RANGE__"]
   selector: {app: gateway}
-  ports: [{name: http, port: 80, targetPort: http}]
+  ports: [{name: https, port: 443, targetPort: https}]

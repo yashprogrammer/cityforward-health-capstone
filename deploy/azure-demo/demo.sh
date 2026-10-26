@@ -5,6 +5,7 @@
 #   CF_APPROVED=yes deploy/azure-demo/demo.sh providers   register Microsoft.ContainerService (free, subscription-level change)
 #   CF_APPROVED=yes deploy/azure-demo/demo.sh up          create everything, deploy, smoke test (COSTS MONEY)
 #   deploy/azure-demo/demo.sh smoke       smoke test the running deployment
+#   CF_APPROVED=yes deploy/azure-demo/demo.sh redeploy [--images]   push chart/gateway (and with --images, rebuilt code) to the running deployment
 #   CF_APPROVED=yes deploy/azure-demo/demo.sh stop|start  deallocate / resume the cluster and database between sessions
 #   CF_APPROVED=yes deploy/azure-demo/demo.sh down        destroy everything and verify nothing is left
 #   deploy/azure-demo/demo.sh status      what exists and what it costs per hour
@@ -74,6 +75,60 @@ cmd_providers() {
   echo "Microsoft.ContainerService: $(az provider show -n Microsoft.ContainerService --query registrationState -o tsv)"
 }
 
+# Gateway (HTTPS, public only to this machine's /32) then the chart. Used by 'up' and 'redeploy'. Expects RG AKS ACR_LOGIN KV CLIENT_ID TENANT MY_IP and K().
+deploy_app() {
+  render_gateway() { sed -e "s#__IMAGE__#$ACR_LOGIN/cityforward-gateway:demo#" -e "s#__SOURCE_RANGE__#$MY_IP/32#" -e "s#__HOST__#$1#g" deploy/azure-demo/azure-gateway.yaml; }
+  echo "== gateway (public to $MY_IP only, HTTPS with a self-signed certificate)"
+  IP=$(K -n gateway get svc gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+  if [[ -z "$IP" ]]; then
+    render_gateway localhost | K apply -f -              # first apply only to obtain the public IP the certificate must name
+    for _ in $(seq 1 60); do IP=$(K -n gateway get svc gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true); [[ -n "$IP" ]] && break; sleep 10; done
+  fi
+  nonempty "gateway public IP" "$IP"
+  render_gateway "$IP" | K apply -f -
+  K -n gateway rollout restart deploy/gateway >/dev/null
+  K -n gateway rollout status deploy/gateway --timeout=180s
+
+  echo "== chart"
+  helm --kube-context "$AKS" upgrade --install cityforward deploy/helm/cityforward -n cityforward \
+    -f deploy/helm/cityforward/values-aks.yaml -f deploy/helm/cityforward/values-azure-demo.yaml \
+    --set-string "images.customer.repository=$ACR_LOGIN/cityforward-customer" --set-string "images.ai.repository=$ACR_LOGIN/cityforward-ai" \
+    --set-string "keyVault.name=$KV" --set-string "keyVault.tenantId=$TENANT" --set-string "keyVault.workloadIdentityClientId=$CLIENT_ID" \
+    --set-string "meditrack.publicBaseUrl=https://$IP" --wait --timeout 15m
+  helm --kube-context "$AKS" test cityforward -n cityforward
+  echo "https://$IP" >"$DATA/azure-gateway-url"
+}
+
+# Common setup for commands that act on a running deployment.
+attach() {
+  need terraform; need az; need kubectl; need helm; need kubelogin; need curl; require_subscription
+  [[ -f "$STATE" ]] || die "no running demo (no .data/demo.tfstate)"
+  make_local_vars
+  RG=$(tf_out resource_group); AKS=$(tf_out aks_name); ACR_LOGIN=$(tf_out acr_login_server); KV=$(tf_out key_vault_name); CLIENT_ID=$(tf_out copilot_identity_client_id)
+  ACR=${ACR_LOGIN%%.*}; TENANT=$(az account show --query tenantId -o tsv); nonempty tenant "$TENANT"
+  az aks get-credentials -g "$RG" -n "$AKS" --file "$KUBECONFIG" --overwrite-existing >/dev/null
+  kubelogin convert-kubeconfig -l azurecli --kubeconfig "$KUBECONFIG"
+  K() { kubectl --context "$AKS" "$@"; }
+}
+
+build_images() {
+  echo "== images (built inside ACR; nothing is pushed from this laptop)"
+  az acr build -r "$ACR" -t cityforward-customer:demo customer >/dev/null
+  az acr build -r "$ACR" -t cityforward-ai:demo -f ai/Dockerfile . >/dev/null
+  az acr build -r "$ACR" -t cityforward-gateway:demo -f deploy/azure-demo/gateway.Dockerfile deploy/azure-demo >/dev/null
+}
+
+# Push local code/chart changes to the running deployment (the feedback loop). Rebuilds images with --images, restarting the pods that use them.
+cmd_redeploy() {
+  approved redeploy; attach
+  if [[ "${2:-}" == "--images" ]]; then
+    build_images
+    K -n cityforward rollout restart deploy/copilot deploy/meditrack deploy/payer >/dev/null
+  fi
+  deploy_app
+  cmd_smoke
+}
+
 cmd_up() {
   approved up
   need terraform; need az; need kubectl; need helm; need kubelogin "brew install kubelogin"; need curl; need openssl; need jq
@@ -108,30 +163,16 @@ cmd_up() {
   PYTHON="$PYTHON" "$PYTHON" deploy/azure-demo/azure_secrets.py --vault "$KV" --kube-context "$AKS" --kubeconfig "$KUBECONFIG"
   "$PYTHON" deploy/azure-demo/azure_db_roles.py --vault "$KV" --kube-context "$AKS" --kubeconfig "$KUBECONFIG"
 
-  echo "== gateway (public to $MY_IP only)"
-  sed -e "s#__IMAGE__#$ACR_LOGIN/cityforward-gateway:demo#" -e "s#__SOURCE_RANGE__#$MY_IP/32#" deploy/azure-demo/azure-gateway.yaml | K apply -f -
-  IP=""
-  for _ in $(seq 1 60); do IP=$(K -n gateway get svc gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true); [[ -n "$IP" ]] && break; sleep 10; done
-  nonempty "gateway public IP" "$IP"
-
-  echo "== chart"
-  helm --kube-context "$AKS" upgrade --install cityforward deploy/helm/cityforward -n cityforward \
-    -f deploy/helm/cityforward/values-aks.yaml -f deploy/helm/cityforward/values-azure-demo.yaml \
-    --set-string "images.customer.repository=$ACR_LOGIN/cityforward-customer" --set-string "images.ai.repository=$ACR_LOGIN/cityforward-ai" \
-    --set-string "keyVault.name=$KV" --set-string "keyVault.tenantId=$TENANT" --set-string "keyVault.workloadIdentityClientId=$CLIENT_ID" \
-    --set-string "meditrack.publicBaseUrl=http://$IP" --wait --timeout 15m
-  helm --kube-context "$AKS" test cityforward -n cityforward
-
-  echo "$IP" >"$DATA/azure-gateway-ip"
+  deploy_app
   echo "== smoke (twice, as required before recording)"
   cmd_smoke && cmd_smoke
   echo
-  echo "Up. Open http://$IP  (reachable only from $MY_IP). Burn rate: see 'demo.sh status'. Tear down: CF_APPROVED=yes deploy/azure-demo/demo.sh down"
+  echo "Up. Open https://$IP  (accept the one-time certificate warning; reachable only from $MY_IP). Burn rate: see 'demo.sh status'. Tear down: CF_APPROVED=yes deploy/azure-demo/demo.sh down"
 }
 
 cmd_smoke() {
-  [[ -f "$DATA/azure-gateway-ip" ]] || die "no deployment recorded (run 'up' first)"
-  "$PYTHON" deploy/azure-demo/smoke.py --base-url "http://$(cat "$DATA/azure-gateway-ip")" --expect-model foundry --model-call
+  [[ -f "$DATA/azure-gateway-url" ]] || die "no deployment recorded (run 'up' first)"
+  "$PYTHON" deploy/azure-demo/smoke.py --base-url "$(cat "$DATA/azure-gateway-url")" --insecure --expect-model foundry --model-call
 }
 
 cmd_stop() {
@@ -178,7 +219,7 @@ cmd_down() {
     if az resource show --ids "$id" >/dev/null 2>&1; then echo "STILL EXISTS: $id"; left=1; else echo "index entry only (resource is gone): ${id##*/}"; fi
   done < <(az resource list --tag purpose=cf-demo --tag environment=demo --query '[].id' -o tsv)
   [[ $left -eq 0 ]] || die "teardown is NOT verified: resources remain (see above)"
-  rm -f "$STATE" "$STATE.backup" "$PLAN" "$DATA/azure-gateway-ip" "$KUBECONFIG"
+  rm -f "$STATE" "$STATE.backup" "$PLAN" "$DATA/azure-gateway-ip" "$DATA/azure-gateway-url" "$KUBECONFIG"
   echo "Torn down and verified: demo resource groups gone, no tagged resources left, Key Vault purged. The Foundry resource group and the budget are separate (foundry.py down)."
 }
 
@@ -194,6 +235,6 @@ cmd_status() {
 }
 
 case "${1:-}" in
-  plan) cmd_plan ;; providers) cmd_providers ;; up) cmd_up ;; smoke) cmd_smoke ;; stop) cmd_stop ;; start) cmd_start ;; down) cmd_down ;; status) cmd_status ;;
+  plan) cmd_plan ;; providers) cmd_providers ;; up) cmd_up ;; redeploy) cmd_redeploy "$@" ;; smoke) cmd_smoke ;; stop) cmd_stop ;; start) cmd_start ;; down) cmd_down ;; status) cmd_status ;;
   *) sed -n '2,13p' "$0"; exit 2 ;;
 esac

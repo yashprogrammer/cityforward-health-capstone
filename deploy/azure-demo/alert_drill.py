@@ -22,6 +22,7 @@ import hashlib
 import http.client
 import json
 import secrets
+import ssl
 import subprocess
 import sys
 import time
@@ -50,6 +51,14 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(NoRedirect)
 
 
+def allow_self_signed() -> None:
+    """For a gateway that signs its own certificate (the Azure demo): skip verification for this process only."""
+    global OPENER
+    ctx = ssl._create_unverified_context()
+    OPENER = urllib.request.build_opener(NoRedirect, urllib.request.HTTPSHandler(context=ctx))
+    urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx)))
+
+
 def http_get(url, headers=None):
     """(status, headers, body). Redirects are returned, not followed."""
     try:
@@ -71,7 +80,7 @@ def smart_token(base: str, user: str) -> str:
     """The same authorization-code + PKCE flow the dashboard performs, for a named MediTrack user. The token is never printed."""
     cookie = {"Cookie": f"mt_user={user}"}
     links = json.loads(http_get(f"{base}/int/admin/extlinks")[2])
-    lnk = next(entry["LNK_ID"] for entry in links if entry["DISP_MD"] == "SMART")
+    lnk = next(entry["LNK_ID"] for entry in links if entry["DISP_MD"] == "SMART" and entry.get("IS_ACTV", 1))
     st, h, _ = http_get(f"{base}/smart/ehr-launch?lnk_id={lnk}&ip_no={ADMISSION}", cookie)
     launch = urllib.parse.parse_qs(urllib.parse.urlparse(h["Location"]).query)["launch"][0]
     cfg = json.loads(http_get(f"{base}/smart/.well-known/smart-configuration")[2])

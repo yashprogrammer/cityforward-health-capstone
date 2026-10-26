@@ -3,7 +3,7 @@
 Positive paths (health, SMART sign-in, a grounded model answer) and the negative paths that matter for a hospital (no token, wrong role).
 Synthetic patient only. One model call (about 0.0003 USD) when --model-call is given.
 
-    python deploy/azure-demo/smoke.py --base-url http://<gateway-ip> [--expect-model foundry] [--model-call]
+    python deploy/azure-demo/smoke.py --base-url https://<gateway-ip> --insecure [--expect-model foundry] [--model-call]
 """
 import argparse
 import json
@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from alert_drill import smart_token      # the same SMART authorization-code + PKCE flow the dashboard uses
+from alert_drill import allow_self_signed, smart_token      # the same SMART authorization-code + PKCE flow the dashboard uses
 
 RESULTS: list[tuple[str, bool, str]] = []
 
@@ -56,8 +56,11 @@ def main() -> int:
     p.add_argument("--expect-model", default="", help="prefix the AI service must report, e.g. foundry")
     p.add_argument("--model-call", action="store_true", help="make one real model call (Ask the chart)")
     p.add_argument("--wait", type=int, default=300, help="seconds to wait for the services to answer")
+    p.add_argument("--insecure", action="store_true", help="accept the gateway's self-signed certificate (the demo signs its own)")
     args = p.parse_args()
     base = args.base_url.rstrip("/")
+    if args.insecure:
+        allow_self_signed()
 
     s, _ = wait_ready(f"{base}/gateway-healthz", args.wait)
     check("gateway answers", s == 200, f"HTTP {s}")

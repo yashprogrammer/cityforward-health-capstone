@@ -88,4 +88,28 @@ spec:
       ports: [{port: 8080}, {port: 5432}]
     - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}}}}]
       ports: [{port: {{ .Values.copilot.metricsPort }}}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: smoke-test-egress
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  podSelector: {matchLabels: {cityforward/role: smoke-test}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchExpressions: [{key: app.kubernetes.io/name, operator: In, values: [meditrack, payer, copilot]}]}}]
+      ports: [{port: 8080}, {port: 8001}, {port: 8003}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-accept-smoke-test
+  labels: {{- include "cf.labels" . | nindent 4 }}
+spec:
+  podSelector: {matchExpressions: [{key: app.kubernetes.io/name, operator: In, values: [meditrack, payer, copilot]}]}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {cityforward/role: smoke-test}}}]
+      ports: [{port: 8080}, {port: 8001}, {port: 8003}]
 {{- end }}

@@ -215,3 +215,27 @@ def test_azure_gateway_is_restricted_to_one_address_and_runs_non_root():
     assert dep["securityContext"]["runAsNonRoot"] is True and dep["automountServiceAccountToken"] is False
     ns = next(d for d in docs if d["kind"] == "Namespace")
     assert ns["metadata"]["labels"]["pod-security.kubernetes.io/enforce"] == "restricted"
+
+
+def test_single_node_disk_profile_recreates_pods_and_seeds_beside_them_and_helm_test_can_reach_the_apps():
+    docs = render_azure_demo()
+    mt = next(d for d in kinds(docs, "Deployment") if d["metadata"]["name"] == "meditrack")
+    assert mt["spec"]["strategy"] == {"type": "Recreate"}                     # an RWO disk cannot be attached by two pods at once
+    seed = next(d for d in kinds(docs, "Job") if d["metadata"]["name"].startswith("meditrack-seed"))
+    aff = seed["spec"]["template"]["spec"]["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+    assert aff["labelSelector"]["matchLabels"] == {"app.kubernetes.io/name": "meditrack"} and aff["topologyKey"] == "kubernetes.io/hostname"
+    policies = {p["metadata"]["name"]: p for p in kinds(docs, "NetworkPolicy")}
+    assert {"smoke-test-egress", "apps-accept-smoke-test"} <= set(policies)
+    test_pod = next(d for d in docs if d["kind"] == "Pod")
+    assert test_pod["metadata"]["labels"]["cityforward/role"] == "smoke-test"
+    # the RWX production profile keeps the default rolling update and no affinity
+    prod = render("values-aks.yaml")
+    assert "strategy" not in next(d for d in kinds(prod, "Deployment") if d["metadata"]["name"] == "meditrack")["spec"]
+
+
+def test_azure_gateway_serves_https_only_to_the_internet():
+    text = (CHART.parents[1] / "azure-demo" / "azure-gateway.yaml").read_text()
+    docs = [d for d in yaml.safe_load_all(text) if d]
+    svc = next(d for d in docs if d["kind"] == "Service")
+    assert [p["port"] for p in svc["spec"]["ports"]] == [443], "no plain-HTTP port is exposed"
+    assert "tls internal" in text and "default_sni __HOST__" in text

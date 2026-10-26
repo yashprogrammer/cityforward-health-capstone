@@ -151,3 +151,18 @@ Proven on this subscription in eastus2: VNet, ACR Basic, Key Vault (public, RBAC
 | westus3, southcentralus, centralindia | not completed (probe stopped; owner chose to stay in eastus2) |
 
 Decision: stay in eastus2 with `GP_Standard_D2ds_v5` (about 0.41 USD/h total, PostgreSQL line is an estimate: the retail price API returned nothing for it).
+
+## Third attempt (GP_Standard_D2ds_v5, eastus2) — 2026-10-26: deployed, then four fixes on the live cluster
+
+`up` created 37 resources and deployed the chart; the first public smoke passed 8/8 twice. Findings, in order:
+
+| Finding | Fix |
+|---|---|
+| Copilot crashed: `permission denied for schema public` (PostgreSQL 15+, schema owned by azure_pg_admin) | `GRANT USAGE, CREATE ON SCHEMA public` in `db-roles.sql` |
+| Seed job stuck: single-node disk (RWO) attached to another node | chart: `strategy: Recreate` and seed pod affinity to the MediTrack pod when `accessMode` is RWO |
+| `helm test` timed out: Cilium enforces default-deny, kind does not | chart: `smoke-test-egress` and `apps-accept-smoke-test` NetworkPolicies, scoped to the test pod's label |
+| **Browser sign-in failed: `Cannot read properties of undefined (reading 'digest')`.** `crypto.subtle` exists only on HTTPS or localhost; the Python smoke test cannot see this | gateway serves HTTPS with Caddy's internal CA (`tls internal`, `default_sni`); browsers warn once; `smoke.py --insecure` |
+
+Operational lessons: (1) the AKS API server and the gateway are restricted to one /32, so a changed public IP locks everyone out (`az aks update --api-server-authorized-ip-ranges` and patch `loadBalancerSourceRanges`); (2) changing `publicBaseUrl` on a populated database does not update the SMART client redirect URI or the launch link (the seed skips a populated DB) and the Copilot caches MediTrack's token endpoint: re-register through the admin API and restart the Copilot, or just start from a fresh `up`; (3) Helm's server-side apply cannot remove a defaulted `rollingUpdate` when switching to Recreate on a live Deployment (patched once by hand; fresh installs are fine).
+
+New: `demo.sh redeploy [--images]` pushes chart/gateway (and rebuilt code) to a running deployment for feedback loops. Not yet verified: the HTTPS sign-in in a real browser (the built-in browser refused the self-signed certificate), `stop`/`start`, `down` after a complete deployment.

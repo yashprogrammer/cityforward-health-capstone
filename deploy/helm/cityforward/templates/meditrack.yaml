@@ -26,6 +26,9 @@ metadata:
   labels: {{- include "cf.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.meditrack.replicas }}
+  {{- if eq .Values.meditrack.persistence.accessMode "ReadWriteOnce" }}
+  strategy: {type: Recreate}      # a single-node disk cannot be attached by the old and the new pod at once
+  {{- end }}
   selector:
     matchLabels: {{- include "cf.selector" (dict "name" "meditrack" "root" .) | nindent 6 }}
   template:
