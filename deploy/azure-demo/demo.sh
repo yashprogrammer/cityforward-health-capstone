@@ -157,7 +157,9 @@ cmd_start() {
 cmd_down() {
   approved down; need terraform; need az; require_subscription
   [[ -f "$STATE" ]] || die "no Terraform state at .data/demo.tfstate: nothing of this demo is tracked (check 'az group list --tag purpose=cf-demo')"
-  local rg kv; rg=$(tf_out resource_group) || true; kv=$(tf_out key_vault_name) || true
+  # Outputs only exist after a fully successful apply; after a partial one, fall back to the demo's fixed names and ask Azure for the vault.
+  local rg kv; rg=$(tf output -state="$STATE" -raw resource_group 2>/dev/null) || rg="rg-cityforward-demo"
+  kv=$(az keyvault list -g "$rg" --query '[0].name' -o tsv 2>/dev/null || true)
   make_local_vars
   echo "== terraform destroy"
   tf destroy -input=false -no-color -auto-approve "${tf_vars[@]}"
@@ -169,8 +171,12 @@ cmd_down() {
   if [[ -n "$kv" ]] && az keyvault show-deleted --name "$kv" >/dev/null 2>&1; then
     az keyvault purge --name "$kv" && echo "purged soft-deleted Key Vault $kv"
   fi
-  tagged=$(az resource list --tag purpose=cf-demo --tag environment=demo --query 'length(@)' -o tsv)
-  [[ "$tagged" == "0" ]] || { echo "STILL TAGGED RESOURCES: $tagged"; left=1; }
+  # The tag listing is an index that lags deletes (a deleted server was listed for minutes): confirm each hit with a direct lookup.
+  local id
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    if az resource show --ids "$id" >/dev/null 2>&1; then echo "STILL EXISTS: $id"; left=1; else echo "index entry only (resource is gone): ${id##*/}"; fi
+  done < <(az resource list --tag purpose=cf-demo --tag environment=demo --query '[].id' -o tsv)
   [[ $left -eq 0 ]] || die "teardown is NOT verified: resources remain (see above)"
   rm -f "$STATE" "$STATE.backup" "$PLAN" "$DATA/azure-gateway-ip" "$KUBECONFIG"
   echo "Torn down and verified: demo resource groups gone, no tagged resources left, Key Vault purged. The Foundry resource group and the budget are separate (foundry.py down)."

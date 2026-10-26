@@ -17,7 +17,7 @@ enable_container_insights = false
 node_vm_size = "Standard_D2as_v7"
 node_count   = 2
 
-postgres_sku                   = "B_Standard_B1ms"
+postgres_sku                   = "B_Standard_B2s"
 postgres_ha                    = false
 postgres_storage_mb            = 32768
 postgres_backup_retention_days = 7

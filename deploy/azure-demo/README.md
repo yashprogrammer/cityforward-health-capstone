@@ -125,3 +125,16 @@ Environment findings that shaped the profile: this subscription has **no quota o
 Defects found in the hospital-default Terraform: Key Vault and ACR have public access off but **no private endpoints are defined**, so the cluster could not reach them; the chart's `llmEgressCidrs` comment points at the data subnet, not a model endpoint. The demo profile sidesteps the first by enabling public access with RBAC only; the production story still needs the private endpoints.
 
 Estimated burn while running (nodes verified from the retail price API, the rest estimated): about 0.26 USD/h, roughly 1 USD for a 4-hour session.
+
+## First Azure attempts — 2026-10-26 (both stopped at PostgreSQL, both torn down and verified)
+
+| Attempt | Postgres SKU | Result |
+|---|---|---|
+| 1 | `B_Standard_B1ms` | 26 resources created incl. AKS (5m39s); Flexible Server failed `SkuNotAvailable` ("not supported in this region"); `down` destroyed 26 |
+| 2 | `B_Standard_B2s` | same failure at the same resource; `down` destroyed 26 |
+
+Proven on this subscription in eastus2: VNet, ACR Basic, Key Vault (public, RBAC), identities, role assignments, Free-tier AKS with `Standard_D2as_v7` x2. **Not reached:** image builds, Key Vault sync, DB role job, chart on AKS, smoke, stop/start.
+
+`az postgres flexible-server list-skus` is not a reliable availability signal here: it lists Burstable SKUs for eastus2 with no restriction while creation is refused. It does flag `eastus` as restricted. Probe by creating a server (a refused SKU costs nothing) before building a deployment around a region or SKU.
+
+`demo.sh down` now works after a partial apply (outputs missing) and confirms each tagged-resource hit with a direct lookup, because the tag listing lags deletes. Teardown on both attempts reported: both resource groups gone, soft-deleted Key Vault purged.
