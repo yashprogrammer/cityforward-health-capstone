@@ -138,3 +138,16 @@ Proven on this subscription in eastus2: VNet, ACR Basic, Key Vault (public, RBAC
 `az postgres flexible-server list-skus` is not a reliable availability signal here: it lists Burstable SKUs for eastus2 with no restriction while creation is refused. It does flag `eastus` as restricted. Probe by creating a server (a refused SKU costs nothing) before building a deployment around a region or SKU.
 
 `demo.sh down` now works after a partial apply (outputs missing) and confirms each tagged-resource hit with a direct lookup, because the tag listing lags deletes. Teardown on both attempts reported: both resource groups gone, soft-deleted Key Vault purged.
+
+## Postgres probe — 2026-10-26
+
+`python deploy/azure-demo/pg_probe.py <region>:<SKU> ...` creates a tiny server in a tagged scratch group and deletes the group straight away.
+
+| Region / SKU | Result |
+|---|---|
+| eastus2 `GP_Standard_D2ds_v5` | Succeeded (516 s incl. deletion) |
+| centralus `B_Standard_B1ms` | Succeeded (419 s incl. deletion) |
+| eastus2 `B_Standard_B1ms`, `B_Standard_B2s` | refused `SkuNotAvailable` (full `up` attempts 1 and 2) |
+| westus3, southcentralus, centralindia | not completed (probe stopped; owner chose to stay in eastus2) |
+
+Decision: stay in eastus2 with `GP_Standard_D2ds_v5` (about 0.41 USD/h total, PostgreSQL line is an estimate: the retail price API returned nothing for it).

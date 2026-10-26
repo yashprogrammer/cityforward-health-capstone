@@ -190,7 +190,7 @@ cmd_status() {
   az resource list -g "$rg" --query '[].{type:type,name:name}' -o table
   az aks show -g "$rg" -n "$(tf_out aks_name)" --query '{power:powerState.code,tier:sku.tier,nodes:agentPoolProfiles[0].count,size:agentPoolProfiles[0].vmSize}' -o table
   echo "Approx. hourly burn while running (D2as_v7 list 0.0908 USD x2 nodes verified from the Azure Retail Prices API; other lines are estimates):"
-  echo "  nodes ~0.18 | PostgreSQL B1ms ~0.02 | load balancer + public IPs ~0.04 | ACR Basic ~0.007 | disks+logs ~0.01  =>  about 0.26 USD per hour, ~6 USD per day"
+  echo "  nodes ~0.18 | PostgreSQL GP D2ds_v5 ~0.17 (estimate) | load balancer + public IPs ~0.04 | ACR Basic ~0.007 | disks+logs ~0.01  =>  about 0.41 USD per hour, ~10 USD per day"
 }
 
 case "${1:-}" in
