@@ -1,5 +1,7 @@
 # Layer over values-aks.yaml for the short-lived Azure demo (see deploy/azure-demo/README.md). Synthetic data only.
 # Image repositories, Key Vault name, tenant, workload-identity client id and meditrack.publicBaseUrl are --set by deploy/azure-demo/demo.sh.
+global:
+  imagePullPolicy: Always              # the demo rebuilds the same :demo tag; IfNotPresent would keep serving a node's cached older build
 images:
   customer: {tag: demo}
   ai: {tag: demo}

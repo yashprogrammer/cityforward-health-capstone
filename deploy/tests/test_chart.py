@@ -142,6 +142,11 @@ def test_seed_job_registers_the_vendor_on_install(docs):
     assert env["SEED_FORCE"] == "0"       # an upgrade never wipes the EHR unless asked
 
 
+def test_demo_tag_is_always_repulled():
+    pods = [d for d in render_azure_demo() if d["kind"] == "Deployment"]
+    assert pods and all(c["imagePullPolicy"] == "Always" for d in pods for c in d["spec"]["template"]["spec"]["containers"] if "cityforward-" in c["image"])
+
+
 def test_seed_force_is_opt_in():
     job = kinds(render("values.yaml", "meditrack.seedForce=true"), "Job")[0]
     assert {e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}["SEED_FORCE"] == "1"
