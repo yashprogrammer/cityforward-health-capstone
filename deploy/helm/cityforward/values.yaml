@@ -26,6 +26,7 @@ externalDatabase:
 
 meditrack:
   replicas: 1                    # the legacy EHR is a single instance by design
+  seedForce: false               # true = the next install/upgrade wipes MediTrack and reloads the synthetic data (demo reset)
   publicBaseUrl: ""              # what browsers use (token audience). Empty = derived from ingress.host
   persistence: {size: 2Gi, storageClass: "", accessMode: ReadWriteOnce}     # documents + import hot folder (Azure Files, ReadWriteMany, in AKS)
   resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 512Mi}}

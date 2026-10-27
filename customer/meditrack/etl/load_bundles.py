@@ -212,6 +212,21 @@ def load_cases(conn, root: Path, docs_dir: Path) -> dict:
             conn.execute("INSERT INTO IP_DIAG_DTL (IP_NO, ICD_CD, DIAG_DESC, DIAG_TYP) VALUES (%s,%s,%s,%s)", (ip_no, icd, desc, typ))
             stats["diagnoses"] += 1
 
+        # Synthea files a chronic condition under the visit where it was first coded, so the stay itself would show no diagnoses. A real admission carries the
+        # working diagnosis (the reason it was admitted) and the problems still active on arrival.
+        typ = "PROV" if case["status"] == "ADM" else "FINAL"
+        reason_sct = next((x["code"] for x in ((target.get("reasonCode") or [{}])[0].get("coding") or []) if x["system"].endswith("sct")), None)
+        carried = [(M.SNOMED_TO_ICD10CM.get(reason_sct or ""), clean(((target.get("reasonCode") or [{}])[0].get("coding") or [{}])[0].get("display") or ""))]
+        for c in by_type["Condition"]:
+            if c.get("clinicalStatus", {}).get("coding", [{}])[0].get("code") == "active" and parse(c.get("onsetDateTime") or case["admit"]) <= admit:
+                sct = next((x["code"] for x in c["code"]["coding"] if x["system"].endswith("sct")), None)
+                carried.append((M.SNOMED_TO_ICD10CM.get(sct or ""), clean(c["code"].get("text", ""))))
+        for icd, desc in carried:
+            if icd and (target_ip, icd) not in seen_dx:
+                seen_dx.add((target_ip, icd))
+                conn.execute("INSERT INTO IP_DIAG_DTL (IP_NO, ICD_CD, DIAG_DESC, DIAG_TYP) VALUES (%s,%s,%s,%s)", (target_ip, icd, desc, typ))
+                stats["diagnoses"] += 1
+
         # procedures
         for p in by_type["Procedure"]:
             ip_no = ip_of((p.get("encounter") or {}).get("reference"))

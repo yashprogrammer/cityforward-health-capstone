@@ -152,7 +152,7 @@ function Patient({ ip }) {
         {tab === 'Documents' && <Documents ip={ip} docs={d.docs} reload={reload} />}
         {tab === 'Discharge Summary' && <SummaryTab ip={ip} summary={d.summary} reload={reload} />}
         {custom && <EmbeddedTab key={custom.LNK_ID} title={custom.LNK_LBL} src={custom.HREF} />}
-        {tab === 'Payer Auth' && <Grid rows={d.auths.map((x) => ({ ...x, SUBM_DT: fd(x.SUBM_DT), RESP_DT: fd(x.RESP_DT) }))} cols={[['SUBM_DT', 'Submitted'], ['AUTH_STS', 'Status'], ['QRY_RSN', 'Payer query'], ['RESP_DT', 'Responded']]} />}
+        {tab === 'Payer Auth' && <Grid rows={d.auths.map((x) => ({ ...x, SUBM_DT: fd(x.SUBM_DT), RESP_DT: fd(x.RESP_DT) }))} cols={[['SUBM_DT', 'Submitted'], ['AUTH_STS', 'Status'], ['QRY_RSN', 'Payer query'], ['RESP_DT', 'Responded']]} empty="No payer authorization yet. One is submitted and answered after discharge is advised, so it appears here once the stay has finished." />}
         {tab === 'Visit History' && <VisitHistory visits={d.visits} />}
       </div>
     </>
@@ -191,8 +191,8 @@ function EmbeddedTab({ title, src }) {
   return <iframe ref={ref} title={title} src={src} style={{ width: '100%', height, border: 0, display: 'block' }} />
 }
 
-function Grid({ rows, cols }) {
-  if (!rows?.length) return <div className="hint">No records found.</div>
+function Grid({ rows, cols, empty = 'No records found.' }) {
+  if (!rows?.length) return <div className="hint">{empty}</div>
   return (
     <table className="grid">
       <thead><tr>{cols.map(([, h]) => <th key={h}>{h}</th>)}</tr></thead>

@@ -4,6 +4,7 @@ Why hybrid: embeddings find "heart attack" when the note says "STEMI"; full-text
 Reciprocal Rank Fusion needs no score calibration: score = sum over rankers of 1 / (60 + rank).
 """
 import hashlib
+import re
 from dataclasses import dataclass
 
 from .chart import Chart
@@ -96,6 +97,31 @@ def search(patient_id: str, query: str, k: int = 8, principal=None, kinds: list[
         got = {r["id"]: r for r in c.execute("SELECT id, source_ref, kind, text, effective, encounter_id FROM chunk WHERE id = ANY(%s)", (top,))}
     return [Hit(id=i, source_ref=got[i]["source_ref"], kind=got[i]["kind"], text=got[i]["text"],
                 effective=got[i]["effective"].isoformat() if got[i]["effective"] else None, encounter_id=got[i]["encounter_id"], score=scores[i]) for i in top]
+
+
+# Notes are long and mention everything, so for "what medications...", "any pending results?" or "what procedures..." they outrank the short structured records that actually
+# answer the question. When the question names a record type, search those records first, then let the general search fill the remaining slots.
+KIND_HINTS = [
+    (re.compile(r"\b(medic\w*|drugs?|doses?|dosing|prescri\w*|taking|pharmac\w*|antibiotics?|anticoag\w*|antiplatelet|blood thinners?)\b"), "medication"),
+    (re.compile(r"\b(labs?|laboratory|results?|pending|creatinine|troponin|a1c|hemoglobin|potassium|sodium|inr)\b"), "lab"),
+    (re.compile(r"\b(vitals?|blood pressure|bp|heart rate|pulse|temperature|oxygen|spo2|sats?)\b"), "vital"),
+    (re.compile(r"\b(procedures?|surger\w*|operations?|cath\w*|biops\w*)\b"), "procedure"),
+    (re.compile(r"\b(diagnos\w*|conditions?|problems?|comorbid\w*)\b"), "diagnosis"),
+]
+ROUTED_PRIMARY = 8
+
+
+def kinds_for(question: str) -> list[str]:
+    low = question.lower()
+    return [kind for rx, kind in KIND_HINTS if rx.search(low)]
+
+
+def search_for_question(patient_id: str, question: str, k: int = 8, principal=None) -> list[Hit]:
+    """`search`, with the record types the question asks about ranked first. Still one patient, still row-level security."""
+    kinds = kinds_for(question)
+    primary = search(patient_id, question, k=ROUTED_PRIMARY, principal=principal, kinds=kinds) if kinds else []
+    seen = {h.id for h in primary}
+    return primary + [h for h in search(patient_id, question, k=k, principal=principal) if h.id not in seen]
 
 
 def _or_query(q: str) -> str:

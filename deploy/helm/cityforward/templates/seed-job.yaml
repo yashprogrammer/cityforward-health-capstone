@@ -33,6 +33,7 @@ spec:
           env:
             - {name: APP_ROLE, value: seed}
             - {name: MEDITRACK_DB_URL, valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.secretName }}, key: meditrack-url}}}
+            - {name: SEED_FORCE, value: {{ ternary "1" "0" .Values.meditrack.seedForce | quote }}}
             - {name: MEDITRACK_DOCS_DIR, value: /data/documents}
             - {name: MEDITRACK_HOTFOLDER, value: /data/import_hotfolder}
             - {name: AI_BACKEND_JWKS_FILE, value: /jwks/ai-backend.jwks.json}

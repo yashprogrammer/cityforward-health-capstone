@@ -139,6 +139,12 @@ def test_seed_job_registers_the_vendor_on_install(docs):
     assert env["APP_ROLE"] == "seed" and env["AI_BACKEND_JWKS_FILE"].endswith(".jwks.json") and env["AI_WEBHOOK_URL"].endswith("/webhooks/meditrack")
     assert env["AI_LAUNCH_URL"].endswith("/ai/launch")
     assert job["metadata"]["annotations"]["helm.sh/hook"] == "post-install,post-upgrade"
+    assert env["SEED_FORCE"] == "0"       # an upgrade never wipes the EHR unless asked
+
+
+def test_seed_force_is_opt_in():
+    job = kinds(render("values.yaml", "meditrack.seedForce=true"), "Job")[0]
+    assert {e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}["SEED_FORCE"] == "1"
 
 
 def test_key_vault_sync_covers_every_secret_the_workloads_reference():

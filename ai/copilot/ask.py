@@ -64,13 +64,20 @@ class State(TypedDict, total=False):
 
 SYSTEM = """You answer a clinician's question using ONLY the numbered passages from one patient's chart.
 Cite the passage ids that support the answer. Never use outside knowledge for patient facts and never invent a value, date or dose.
+Copy dates, doses and values exactly as written in the passages. Never calculate: no durations, differences, totals or relative days (not "day -418", not "for 2 years"); for "since when" give the date shown.
 If the passages do not contain the answer, set insufficient_evidence to true and say what is missing.
 Reply with a single JSON object and nothing else: {"answer": str, "citations": ["C1", ...], "insufficient_evidence": bool}"""
 
 
 def _retrieve(s: State) -> State:
-    hits = rag.search(s["patient_id"], s["question"], k=K, principal=s.get("principal"))
-    return {"hits": hits, "evidence": {f"C{i + 1}": h.text for i, h in enumerate(hits)}, "attempts": 0, "problems": [], "draft": None}
+    hits = rag.search_for_question(s["patient_id"], s["question"], k=K, principal=s.get("principal"))
+    return {"hits": hits, "evidence": {f"C{i + 1}": _evidence(h) for i, h in enumerate(hits)}, "attempts": 0, "problems": [], "draft": None}
+
+
+def _evidence(h) -> str:
+    """What the model sees and the grounding check compares against: the passage plus the date it was recorded, so "since when" has a quotable answer."""
+    day = (h.effective or "")[:10]
+    return h.text + (f" [recorded {day}]" if day and day not in h.text else "")
 
 
 def _prompt(s: State, revise: bool = False) -> str:

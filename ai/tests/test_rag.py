@@ -139,3 +139,26 @@ def test_llm_calls_are_metered_without_storing_prompts(rt, clean_db, hale):
     with db.session() as c:
         row = c.execute("SELECT * FROM llm_call").fetchone()
     assert row["purpose"] == "ask" and row["tokens_in"] > 0 and row["status"] == "ok" and "text" not in row and "prompt" not in row
+
+
+def test_question_names_the_record_types_to_search_first():
+    assert rag.kinds_for("What medications is the patient on and since when?") == ["medication"]
+    assert rag.kinds_for("Is every pending result accounted for?") == ["lab"]
+    assert rag.kinds_for("Were there any procedures this stay?") == ["procedure"]
+    assert rag.kinds_for("What did the latest note say about the plan?") == []
+
+
+def test_medication_question_retrieves_medication_records_before_notes(rt, clean_db, hale):
+    rag.index_chart(load_chart(rt.fhir, hale))
+    hits = rag.search_for_question(hale, "What medications is the patient on and since when?", k=8, principal=SYSTEM)
+    assert hits and hits[0].kind == "medication"
+    assert len({h.id for h in hits}) == len(hits)
+
+
+def test_model_sees_the_recorded_date_and_is_told_not_to_calculate(rt, clean_db, hale):
+    rag.index_chart(load_chart(rt.fhir, hale))
+    gw, llm = _gw({"answer": "x", "citations": [], "insufficient_evidence": True})
+    ask_mod.ask(gw, hale, "What medications is the patient on and since when?", principal=SYSTEM)
+    system, user = llm.prompts[0]
+    assert "Never calculate" in system
+    assert "[recorded 2026-10-17]" in user

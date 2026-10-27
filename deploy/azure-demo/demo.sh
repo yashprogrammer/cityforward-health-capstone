@@ -5,7 +5,7 @@
 #   CF_APPROVED=yes deploy/azure-demo/demo.sh providers   register Microsoft.ContainerService (free, subscription-level change)
 #   CF_APPROVED=yes deploy/azure-demo/demo.sh up          create everything, deploy, smoke test (COSTS MONEY)
 #   deploy/azure-demo/demo.sh smoke       smoke test the running deployment
-#   CF_APPROVED=yes deploy/azure-demo/demo.sh redeploy [--images]   push chart/gateway (and with --images, rebuilt code) to the running deployment
+#   CF_APPROVED=yes deploy/azure-demo/demo.sh redeploy [--images] [--reseed]   push chart/gateway (--images: rebuilt code, --reseed: reload the synthetic data) to the running deployment
 #   CF_APPROVED=yes deploy/azure-demo/demo.sh stop|start  deallocate / resume the cluster and database between sessions
 #   CF_APPROVED=yes deploy/azure-demo/demo.sh down        destroy everything and verify nothing is left
 #   deploy/azure-demo/demo.sh status      what exists and what it costs per hour
@@ -94,7 +94,7 @@ deploy_app() {
     -f deploy/helm/cityforward/values-aks.yaml -f deploy/helm/cityforward/values-azure-demo.yaml \
     --set-string "images.customer.repository=$ACR_LOGIN/cityforward-customer" --set-string "images.ai.repository=$ACR_LOGIN/cityforward-ai" \
     --set-string "keyVault.name=$KV" --set-string "keyVault.tenantId=$TENANT" --set-string "keyVault.workloadIdentityClientId=$CLIENT_ID" \
-    --set-string "meditrack.publicBaseUrl=https://$IP" --disable-openapi-validation --wait --timeout 15m
+    --set-string "meditrack.publicBaseUrl=https://$IP" --set "meditrack.seedForce=${RESEED:-false}" --disable-openapi-validation --wait --timeout 15m
   helm --kube-context "$AKS" test cityforward -n cityforward
   echo "https://$IP" >"$DATA/azure-gateway-url"
 }
@@ -140,7 +140,9 @@ cmd_resume() {
 # Push local code/chart changes to the running deployment (the feedback loop). Rebuilds images with --images, restarting the pods that use them.
 cmd_redeploy() {
   approved redeploy; attach
-  if [[ "${2:-}" == "--images" ]]; then
+  RESEED=false
+  [[ " $* " == *" --reseed "* ]] && RESEED=true        # wipe MediTrack and reload the synthetic data (needed when the seed itself changed)
+  if [[ " $* " == *" --images "* ]]; then
     build_images
     K -n cityforward rollout restart deploy/copilot deploy/meditrack deploy/payer >/dev/null
   fi
