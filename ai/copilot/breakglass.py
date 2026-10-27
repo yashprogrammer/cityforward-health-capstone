@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import audit, db
+from . import audit, db, rag
 from .access import authorize, patient_unit
 from .auth import CurrentUser, Principal
 
@@ -26,7 +26,12 @@ def request_access(patient_id: str, body: GlassIn, p: Principal = CurrentUser):
         raise HTTPException(403, "this token is limited to another patient")
     indexed, unit = patient_unit(patient_id)
     if not indexed:
-        raise HTTPException(409, "patient is not indexed yet")
+        # Opening a chart is what indexes it, and opening is exactly what was refused, so a patient nobody on this service has opened yet has no unit on record.
+        # Learn it from the EHR with the service's own identity (platform indexing); nothing from the chart is shown to the requester.
+        from .app import _chart
+        chart = _chart(patient_id)
+        rag.index_chart(chart)
+        unit = chart.unit
     if p.can_see_unit(unit):
         raise HTTPException(409, "you already have access to this patient's unit")
     if len(body.reason.strip()) < 15:
