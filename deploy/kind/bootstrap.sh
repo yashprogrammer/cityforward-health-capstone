@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Bring the whole stack up on a laptop Kubernetes (kind): cluster, ingress, images, the secrets the chart expects, then the chart.
 #   deploy/kind/bootstrap.sh            create or update
+#   CF_RESEED=1 deploy/kind/bootstrap.sh   same, and reload the synthetic data
+#   CF_SKIP_BUILD=1 deploy/kind/bootstrap.sh   reuse the :dev images already on this machine (a flaky network can fail the pip install)
 #   deploy/kind/bootstrap.sh down       delete the cluster
 # Needs: docker, kind, kubectl, helm, openssl, python3 with `cryptography` and `pyjwt` (for the key pair). Optional: GROQ_API_KEY to switch the AI on.
 # STATUS: written and statically verified; it could not be executed in the authoring sandbox (nested containers are blocked there). Expect to fix small things on the first run.
@@ -30,11 +32,13 @@ kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeou
 fi
 
 echo "== images"
-docker build -t cityforward-customer:dev customer
-docker build -f ai/Dockerfile -t cityforward-ai:dev .
+if [[ "${CF_SKIP_BUILD:-0}" != "1" ]]; then
+  docker build -t cityforward-customer:dev customer
+  docker build -f ai/Dockerfile -t cityforward-ai:dev .
+fi
 kind load docker-image cityforward-customer:dev cityforward-ai:dev --name "$CLUSTER"
 if [[ "${CF_LOCAL_DEMO:-0}" == "1" ]]; then
-  docker build -f deploy/azure-demo/gateway.Dockerfile -t cityforward-gateway:dev deploy/azure-demo
+  [[ "${CF_SKIP_BUILD:-0}" == "1" ]] || docker build -f deploy/azure-demo/gateway.Dockerfile -t cityforward-gateway:dev deploy/azure-demo
   kind load docker-image cityforward-gateway:dev --name "$CLUSTER"
 fi
 
@@ -63,6 +67,7 @@ if [[ "${LLM_PROVIDER:-offline}" != "offline" ]]; then
   if [[ "$LLM_PROVIDER" == "foundry" ]]; then EXTRA+=(--set-string copilot.llm.baseUrlSecretKey=base-url); fi
 fi
 
+if [[ "${CF_RESEED:-0}" == "1" ]]; then EXTRA+=(--set meditrack.seedForce=true); fi     # wipe and reload the synthetic EHR data (needed when the seed changed)
 echo "== chart"
 helm upgrade --install cityforward deploy/helm/cityforward -n "$NS" -f deploy/helm/cityforward/values-kind.yaml "${EXTRA[@]}" --wait --timeout 10m
 helm test cityforward -n "$NS"
