@@ -109,7 +109,7 @@ def main() -> int:
         vault.put_if_missing("meditrack-signing-key", new_signing_key)
 
     manifest = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "cityforward-ai-jwks", "namespace": args.namespace}, "data": {"ai-backend.jwks.json": jwks}}
-    kubectl(args, "apply", "-f", "-", stdin=json.dumps(manifest))
+    kubectl(args, "apply", "--validate=false", "-f", "-", stdin=json.dumps(manifest))       # skips the multi-minute OpenAPI schema download; the manifest is ours
     print("applied  ConfigMap cityforward-ai-jwks (public keys only)")
 
     key = az("cognitiveservices", "account", "keys", "list", "-g", foundry["group"], "-n", foundry["account"], "--query", "key1")

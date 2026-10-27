@@ -49,7 +49,7 @@ def main() -> int:
     sql = f"\\set meditrack_pw '{mt_pw}'\n\\set copilot_pw '{co_pw}'\n" + (ROOT / "deploy/terraform/azure/scripts/db-roles.sql").read_text()
     kubectl(args, "delete", "job", JOB, "--ignore-not-found")
     secret = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "cf-db-roles", "namespace": NS}, "type": "Opaque", "stringData": {"admin": admin, "roles.sql": sql}}
-    kubectl(args, "apply", "-f", "-", stdin=json.dumps(secret))
+    kubectl(args, "apply", "--validate=false", "-f", "-", stdin=json.dumps(secret))
     job = {"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": JOB, "namespace": NS},
            "spec": {"backoffLimit": 2, "ttlSecondsAfterFinished": 300, "template": {"spec": {"restartPolicy": "Never", "containers": [{
                "name": "psql", "image": "postgres:16",
@@ -58,7 +58,7 @@ def main() -> int:
                "volumeMounts": [{"name": "sql", "mountPath": "/sql", "readOnly": True}]}],
                "volumes": [{"name": "sql", "secret": {"secretName": "cf-db-roles", "items": [{"key": "roles.sql", "path": "roles.sql"}]}}]}}}}
     try:
-        kubectl(args, "apply", "-f", "-", stdin=json.dumps(job))
+        kubectl(args, "apply", "--validate=false", "-f", "-", stdin=json.dumps(job))
         done = False
         for _ in range(60):
             st = json.loads(kubectl(args, "get", "job", JOB, "-o", "json"))["status"]

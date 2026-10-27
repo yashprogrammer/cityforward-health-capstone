@@ -81,20 +81,20 @@ deploy_app() {
   echo "== gateway (public to $MY_IP only, HTTPS with a self-signed certificate)"
   IP=$(K -n gateway get svc gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
   if [[ -z "$IP" ]]; then
-    render_gateway localhost | K apply -f -              # first apply only to obtain the public IP the certificate must name
+    render_gateway localhost | K apply --validate=false -f -              # first apply only to obtain the public IP the certificate must name
     for _ in $(seq 1 60); do IP=$(K -n gateway get svc gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true); [[ -n "$IP" ]] && break; sleep 10; done
   fi
   nonempty "gateway public IP" "$IP"
-  render_gateway "$IP" | K apply -f -
+  render_gateway "$IP" | K apply --validate=false -f -
   K -n gateway rollout restart deploy/gateway >/dev/null
   K -n gateway rollout status deploy/gateway --timeout=180s
 
-  echo "== chart"
+  echo "== chart"      # --disable-openapi-validation: the API schema download can take minutes on some networks and fails the install; the chart is validated against Kubernetes schemas in CI (deploy/tests)
   helm --kube-context "$AKS" upgrade --install cityforward deploy/helm/cityforward -n cityforward \
     -f deploy/helm/cityforward/values-aks.yaml -f deploy/helm/cityforward/values-azure-demo.yaml \
     --set-string "images.customer.repository=$ACR_LOGIN/cityforward-customer" --set-string "images.ai.repository=$ACR_LOGIN/cityforward-ai" \
     --set-string "keyVault.name=$KV" --set-string "keyVault.tenantId=$TENANT" --set-string "keyVault.workloadIdentityClientId=$CLIENT_ID" \
-    --set-string "meditrack.publicBaseUrl=https://$IP" --wait --timeout 15m
+    --set-string "meditrack.publicBaseUrl=https://$IP" --disable-openapi-validation --wait --timeout 15m
   helm --kube-context "$AKS" test cityforward -n cityforward
   echo "https://$IP" >"$DATA/azure-gateway-url"
 }
@@ -116,6 +116,25 @@ build_images() {
   az acr build -r "$ACR" -t cityforward-customer:demo customer >/dev/null
   az acr build -r "$ACR" -t cityforward-ai:demo -f ai/Dockerfile . >/dev/null
   az acr build -r "$ACR" -t cityforward-gateway:demo -f deploy/azure-demo/gateway.Dockerfile deploy/azure-demo >/dev/null
+}
+
+# Namespace, Key Vault secrets and the database roles: all idempotent. Expects KV AKS and K().
+prepare_cluster() {
+  echo "== namespace, secrets, database roles"
+  K get ns cityforward >/dev/null 2>&1 || K create ns cityforward
+  K label ns cityforward pod-security.kubernetes.io/enforce=restricted --overwrite
+  PYTHON="$PYTHON" "$PYTHON" deploy/azure-demo/azure_secrets.py --vault "$KV" --kube-context "$AKS" --kubeconfig "$KUBECONFIG"
+  "$PYTHON" deploy/azure-demo/azure_db_roles.py --vault "$KV" --kube-context "$AKS" --kubeconfig "$KUBECONFIG"
+
+}
+
+# Continue an 'up' that stopped after the infrastructure and images (for example on a network blip): secrets, roles, chart, smoke.
+cmd_resume() {
+  approved resume; attach
+  prepare_cluster
+  deploy_app
+  cmd_smoke && cmd_smoke
+  echo "Up. Open $(cat "$DATA/azure-gateway-url")  (accept the one-time certificate warning)."
 }
 
 # Push local code/chart changes to the running deployment (the feedback loop). Rebuilds images with --images, restarting the pods that use them.
@@ -157,12 +176,7 @@ cmd_up() {
   az acr build -r "$ACR" -t cityforward-ai:demo -f ai/Dockerfile . >/dev/null
   az acr build -r "$ACR" -t cityforward-gateway:demo -f deploy/azure-demo/gateway.Dockerfile deploy/azure-demo >/dev/null
 
-  echo "== namespace, secrets, database roles"
-  K get ns cityforward >/dev/null 2>&1 || K create ns cityforward
-  K label ns cityforward pod-security.kubernetes.io/enforce=restricted --overwrite
-  PYTHON="$PYTHON" "$PYTHON" deploy/azure-demo/azure_secrets.py --vault "$KV" --kube-context "$AKS" --kubeconfig "$KUBECONFIG"
-  "$PYTHON" deploy/azure-demo/azure_db_roles.py --vault "$KV" --kube-context "$AKS" --kubeconfig "$KUBECONFIG"
-
+  prepare_cluster
   deploy_app
   echo "== smoke (twice, as required before recording)"
   cmd_smoke && cmd_smoke
@@ -235,6 +249,6 @@ cmd_status() {
 }
 
 case "${1:-}" in
-  plan) cmd_plan ;; providers) cmd_providers ;; up) cmd_up ;; redeploy) cmd_redeploy "$@" ;; smoke) cmd_smoke ;; stop) cmd_stop ;; start) cmd_start ;; down) cmd_down ;; status) cmd_status ;;
+  plan) cmd_plan ;; providers) cmd_providers ;; up) cmd_up ;; redeploy) cmd_redeploy "$@" ;; resume) cmd_resume ;; smoke) cmd_smoke ;; stop) cmd_stop ;; start) cmd_start ;; down) cmd_down ;; status) cmd_status ;;
   *) sed -n '2,13p' "$0"; exit 2 ;;
 esac
