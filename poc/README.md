@@ -1,5 +1,7 @@
 # Build Session 1: the POC (patient-history summarizer)
 
+Instructor guide: [TEACHING-POC.md](../TEACHING-POC.md).
+
 One afternoon of work, on synthetic patients, to answer the CMIO's first question: *"can it read a chart and tell me what matters?"*
 
 ```bash
