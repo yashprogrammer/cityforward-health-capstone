@@ -1,5 +1,7 @@
 # The vendor's AI service ("CityForward Copilot")
 
+Instructor guide: [TEACHING-INTEGRATED.md](../TEACHING-INTEGRATED.md).
+
 This is what learners build, session by session, next to the hospital's EHR. It never touches MediTrack's database: it reads through the
 **FHIR API** with **SMART Backend Services** credentials, keeps its own Postgres (`copilot`, with pgvector), and sits behind the hospital's gateway at `/ai`.
 
