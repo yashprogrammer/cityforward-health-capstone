@@ -10,7 +10,7 @@ fictional.
 Install Docker Desktop and start it. Run these commands from this branch's root:
 
 ```bash
-export PG_PORT=15432 PAYER_PORT=18003 MEDITRACK_PORT=18001
+export PG_PORT=127.0.0.1:15432 PAYER_PORT=127.0.0.1:18003 MEDITRACK_PORT=127.0.0.1:18001
 export PUBLIC_BASE_URL=http://localhost:18001
 docker compose -p cityforward-legacy up --build -d
 ```
