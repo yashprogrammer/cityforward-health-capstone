@@ -28,10 +28,11 @@ def register_integrations(conn) -> None:
     import json
     import os
     from .db import now
-    redirects = os.getenv("SMART_APP_REDIRECT_URIS", "http://localhost:8001/ai/auth/callback http://localhost:8080/auth/callback")
-    conn.execute("INSERT INTO SMT_CLIENT VALUES (%s,%s,'PUBLIC',%s,NULL,%s,1,%s)",
-                 ("cityforward-ai-dashboard", "CityForward AI clinical dashboard", redirects,
-                  "launch openid fhirUser patient/*.read patient/DocumentReference.write user/Practitioner.read", now()))
+    if os.getenv("AI_LAUNCH_URL"):
+        redirects = os.getenv("SMART_APP_REDIRECT_URIS", "http://localhost:8001/ai/auth/callback http://localhost:8080/auth/callback")
+        conn.execute("INSERT INTO SMT_CLIENT VALUES (%s,%s,'PUBLIC',%s,NULL,%s,1,%s)",
+                     ("cityforward-ai-dashboard", "CityForward AI clinical dashboard", redirects,
+                      "launch openid fhirUser patient/*.read patient/DocumentReference.write user/Practitioner.read", now()))
     jwks = os.getenv("AI_BACKEND_JWKS")
     jwks_file = os.getenv("AI_BACKEND_JWKS_FILE")      # the vendor hands IT a public key file; only the PUBLIC half ever reaches the hospital
     if not jwks and jwks_file and os.path.exists(jwks_file):
