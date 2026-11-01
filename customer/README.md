@@ -1,5 +1,7 @@
 # The customer's world: CityForward Health
 
+Instructor guide: [TEACHING-LEGACY.md](../TEACHING-LEGACY.md).
+
 This folder is **not** what learners build. It is the environment an FDE walks into on day one: a hospital with a 15-year-old
 EHR, a payer it must deal with, and (later) a platform team. The instructor explains it; learners study it the way they would
 on site, then build the AI layer next to it (`poc/` and `ai/` in the later branches).

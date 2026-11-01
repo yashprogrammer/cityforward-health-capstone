@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("WEBHOOK_DISPATCHER", "off")
 os.environ.setdefault("PUBLIC_BASE_URL", "http://testserver")
+os.environ.setdefault("AI_LAUNCH_URL", "http://localhost:8001/ai/launch")  # the SMART integration tests explicitly onboard a vendor app
 os.environ.setdefault("MEDITRACK_DB_URL", "postgresql://meditrack:meditrack@localhost:5432/meditrack")
 os.environ.setdefault("MEDITRACK_DOCS_DIR", str(Path(__file__).resolve().parent / ".data" / "documents"))
 os.environ.setdefault("MEDITRACK_HOTFOLDER", str(Path(__file__).resolve().parent / ".data" / "hotfolder"))
