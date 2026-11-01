@@ -17,7 +17,6 @@ a hospital-style security review → executive readout and handoff.
 
 ## Start here
 
-- [`TEACHING.md`](TEACHING.md): explain the integrated system and inspect each historical build step.
 - [`course/README.md`](course/README.md): the lecture map: every lecture in the sheet, its material and its code.
 - [`docs/decisions.md`](docs/decisions.md): the decision record and build plan for the whole capstone.
 - [`docs/FINAL_REVIEW.md`](docs/FINAL_REVIEW.md): what was built, what was verified and what was not, and the decisions made along the way.
