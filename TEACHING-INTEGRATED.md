@@ -34,6 +34,14 @@ needs the provider configuration in `ai/README.md`.
 | Privacy and access | `ai/copilot/redact.py`, `audit.py`, `access.py` | Review redaction, audit, roles, unit rules and their limitations. |
 | Events | `ai/copilot/events.py` | Verify a webhook, queue it, and process it separately. |
 | UI | `ai/dashboard/src/` | Show the chart, evidence, and human decision points. |
+| Multiple specialists | `ai/copilot/discharge.py` | Show how the summary, coding, and prior-auth work is coordinated. |
+| Quality and review | `ai/evalkit/`, `docs/compliance/` | Explain the evaluation cases and the security-review materials. |
+| Operations and handoff | `deploy/`, `incident/`, `course/` | Connect deployment, incident response, the readout, and handoff to the course story. |
+
+Follow the course outline in order: hospital and discovery first, standalone
+POC second, then integrated design and build, and finally evaluation,
+deployment, stakeholder readout, and handoff. A local demo can illustrate these
+stages; it does not prove a hospital deployment is secure or approved.
 
 ## Show what changed in each build session
 
