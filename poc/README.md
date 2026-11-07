@@ -13,6 +13,20 @@ PYTHONPATH=poc pytest poc/tests          # no network or key needed (the model i
 
 Model: `LLM_PROVIDER=groq` (default `openai/gpt-oss-20b`), `foundry` (any OpenAI-compatible endpoint), or `offline`.
 
+## Optional: connect the POC to the legacy EHR
+
+The default file-based lesson still works. To read the synthetic EHR instead, set
+`POC_EHR_URL`, `POC_EHR_PUBLIC_URL`, `POC_FHIR_CLIENT_ID`, and
+`POC_FHIR_KEY_FILE` to a registered SMART backend client. `summarizer/fhir.py`
+requests a read-only token, fetches the selected patient's FHIR chart, and loads
+the linked clinical notes. Keep the private key outside source control.
+
+For the Azure demo, `poc/deploy/compose.yaml` adds this POC alongside the legacy
+services and `register_reader.py` registers only the public key. Foundry can use
+the VM's managed identity with `FOUNDRY_AUTH=managed_identity`; no model API key
+is needed. This POC has no staff login or PHI redaction and is for synthetic data
+on a restricted demo network only.
+
 ## What it does
 
 `summarizer/records.py` flattens a Synthea FHIR bundle into a typed chart. `summarizer/graph.py` is a small LangGraph:
@@ -30,7 +44,7 @@ evidence. A summary that fails is sent back once with the list of problems, then
 
 | Shortcut | Why it is fine for a POC | Where it gets fixed |
 |---|---|---|
-| Reads bundle files from disk | no EHR access yet | integrated: reads through MediTrack's FHIR API with a SMART token |
+| By default reads bundle files from disk | no EHR access needed for the first lesson | optional live FHIR adapter; integrated: SMART launch inside the EHR |
 | Whole chart in the prompt | 20 short patients | Build Session 2: retrieval (RAG) |
 | Identifiers in the prompt | synthetic data | Build Session 4: PHI redaction before any model call |
 | No login, no audit trail | one user, laptop | Sessions 4 and RBAC: audit log, roles, row-level security |

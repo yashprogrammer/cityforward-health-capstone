@@ -52,7 +52,7 @@ def extract_json(text: str) -> dict:
 
 
 class OpenAICompatible:
-    def __init__(self, name: str, base_url: str, api_key: str, model: str, timeout: float = 60):
+    def __init__(self, name: str, base_url: str, api_key, model: str, timeout: float = 60):
         from langchain_openai import ChatOpenAI   # imported lazily: offline mode needs no model client
         self.name = f"{name}:{model}"
         self._chat = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0, timeout=timeout, max_retries=1)
@@ -75,8 +75,11 @@ def get_llm(provider: str | None = None) -> LLM | None:
         return OpenAICompatible("groq", os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1"), key, os.getenv("LLM_MODEL", "openai/gpt-oss-20b"))
     if provider == "foundry":
         base, key = os.getenv("LLM_BASE_URL"), os.getenv("LLM_API_KEY")
+        if os.getenv("FOUNDRY_AUTH") == "managed_identity":
+            from azure.identity import ManagedIdentityCredential, get_bearer_token_provider
+            key = get_bearer_token_provider(ManagedIdentityCredential(), "https://ai.azure.com/.default")
         if not (base and key):
-            raise LLMError("foundry needs LLM_BASE_URL and LLM_API_KEY")
+            raise LLMError("foundry needs LLM_BASE_URL and a key or managed identity")
         return OpenAICompatible("foundry", base, key, os.getenv("LLM_MODEL", "gpt-oss-20b"))
     if provider == "offline":
         return None

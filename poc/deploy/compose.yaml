@@ -1,0 +1,31 @@
+services:
+  poc:
+    build:
+      context: .
+      dockerfile: poc/deploy/Dockerfile
+    restart: unless-stopped
+    environment:
+      POC_EHR_URL: http://meditrack:8001
+      POC_EHR_PUBLIC_URL: ${PUBLIC_BASE_URL}
+      POC_FHIR_CLIENT_ID: poc-reader
+      POC_FHIR_KEY_FILE: /run/poc-key/private.pem
+      LLM_PROVIDER: foundry
+      FOUNDRY_AUTH: managed_identity
+      LLM_BASE_URL: ${FOUNDRY_BASE_URL}
+      LLM_MODEL: ${FOUNDRY_MODEL}
+    volumes:
+      - ./secrets:/run/poc-key:ro
+    depends_on:
+      meditrack: {condition: service_started}
+  gateway:
+    ports: ["443:443"]
+    volumes:
+      - ./poc/deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DEMO_DOMAIN: ${DEMO_DOMAIN}
+    depends_on: [meditrack, poc]
+volumes:
+  caddy_data:
+  caddy_config:

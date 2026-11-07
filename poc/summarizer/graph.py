@@ -69,7 +69,7 @@ def build_evidence(rec: PatientRecord, max_notes_chars: int = 1800) -> dict[str,
     def add(text: str) -> None:
         ev[f"E{len(ev) + 1}"] = text
 
-    add(f"Patient: {rec.name}, {rec.age} y {rec.sex}; payer {rec.payer or 'self-pay'}; chart date {rec.as_of}")
+    add(f"Patient: {rec.name}, {rec.age} y {rec.sex}; payer {rec.payer or 'not available'}; chart date {rec.as_of}")
     inpatient = [e for e in rec.encounters if e.cls == "IMP"]
     for e in inpatient[-2:]:
         add(f"Inpatient encounter {e.start[:10]} to {(e.end or 'ongoing')[:10]}: {e.type}" + (f"; reason: {e.reason}" if e.reason else ""))
