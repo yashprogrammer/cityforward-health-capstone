@@ -256,6 +256,57 @@ The decisions were saved on synthetic demo data with test reasons ("Test invalid
 code", "Test of inline reject form"). The prior-authorization forms compile and use
 the same component but were not clicked through in a browser.
 
+### 6. Revising a coding decision (2026-11-07)
+
+**Symptom.** A coder accepted J32.9 and J01.90, then Finalize failed with "J32.9 and
+J01.90 cannot be reported together (Excludes1)". The decided lines had no buttons, so
+the mistake could not be fixed.
+
+**Fix.** The backend already allowed a new decision while the worksheet is OPEN; the
+screen hid the buttons. Every decided line now has "Revise decision", which brings
+back Accept, Reject and Change (and "Keep ..." to leave it as it was). The history
+entry records the earlier answer, for example `reject J01.90 (was accepted)`, and the
+audit log keeps every decision. If the line chosen as principal diagnosis is revised
+away, the principal choice clears. The Finalize error now also shows next to the
+Finalize button. Once a worksheet is FINAL, decisions are locked.
+
+**Checked.** Test `test_a_coder_can_revise_a_decision_to_clear_a_conflict` (accept
+everything, Finalize returns 409 Excludes1, reject the conflicting line, Finalize
+returns 200) passes on a disposable database. On Azure, J01.90 was revised from
+accepted to rejected with a reason. Finalize was not clicked (it files a document
+into the EHR). One older test in `ai/tests/test_coding.py`,
+`test_worksheet_flags_documentation_queries_and_needs_human_decisions`, fails on the
+disposable database with or without this change (a code status expectation), so it is
+a data or environment difference to investigate, not a result of this work.
+
+### 7. Finalize codes (2026-11-07)
+
+**Report.** "Finalize codes" seemed not to work.
+
+**Cause.** Not the button. The presenter's public IP had changed, and the firewall
+(NSG rules `course-owner-https-ssh` and `course-integrated-https`) only allows one
+address, so every request from the browser timed out and the page stayed busy. Run
+`curl -m 15 https://<demo domain>:8443/ai/healthz` to see it: a timeout means the
+IP changed. Fix: set both rules' source to the new address, for example
+`az network nsg rule update -g <group> --nsg-name cf-demoNSG -n course-integrated-https --source-address-prefixes <new-ip>/32`
+(same for the other rule). The staff session also expires while blocked, so sign in
+again.
+
+**Result after access came back.** On worksheet CW-F3D6D4397C (principal I50.22,
+six secondary codes, the conflicting J01.90 rejected): `POST /api/coding/.../finalize`
+returned 200, the worksheet became FINAL ("finalized 7 code(s)" in its history), and a
+`CODING_SUMMARY` document (id 76, filed by `cityforward-ai-backend`) appeared in the
+patient's Documents tab in the EHR. This is the write-back into the legacy record.
+That patient's demo chart now has a finalized worksheet and that document.
+
+**Small change.** After finalizing, the screen showed nothing but a FINAL badge. It
+now shows a "Codes finalized" panel with who, when, the principal diagnosis and the
+secondary codes, and says the decisions are locked.
+
+**Test note.** In the built-in browser pane a native dropdown cannot be driven by
+keyboard, so the principal diagnosis was set through the page's change event; the
+Finalize click itself was a real click.
+
 Do not run the destructive legacy seed against the existing Azure database.
 
 ### Local test database incident

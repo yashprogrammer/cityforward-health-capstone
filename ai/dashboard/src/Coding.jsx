@@ -41,15 +41,25 @@ export default function Coding({ patient, setWhy, reload, session }) {
 
 function Worksheet({ w, previousCodes, hasPrevious, absent, canDecide, onChange, setWhy }) {
   const { busy, error, run } = useAction()
-  const [principal, setPrincipal] = useState('')
+  const [picked, setPicked] = useState('')
   const [asking, setAsking] = useState(null)   // { item, mode: 'reject' | 'modify' }
-  const decide = (item, body) => run(async () => { await api(`/coding/${w.id}/items/${item}`, { method: 'POST', body }); await onChange(); return true })
+  const [revising, setRevising] = useState(null)   // id of a decided line whose decision is being reconsidered
+  const principal = w.items.some((i) => i.id === picked && ['accepted', 'modified'].includes(i.decision)) ? picked : ''   // a revised line can no longer be the principal
+  const decide = async (item, body) => { const ok = await run(async () => { await api(`/coding/${w.id}/items/${item}`, { method: 'POST', body }); await onChange(); return true }); if (ok) setRevising(null); return ok }
   const final = w.status === 'FINAL'
   const remaining = w.open_items.length
   return (
     <article className="card">
       <div className="row"><h3>{w.id}</h3><span className={`status s-${w.status}`}>{w.status}{w.mode === 'chart-only' ? ' · no AI' : ''}</span></div>
       <ErrorNote error={error} />
+      {final && (() => {
+        const kept = w.items.filter((i) => ['accepted', 'modified'].includes(i.decision))
+        const main = kept.find((i) => i.role === 'principal')
+        return <div className="final-note" role="status"><b>Codes finalized</b> by {w.finalized_by} · {(w.finalized_at || '').slice(0, 16).replace('T', ' ')}
+          <div>Principal diagnosis: <code>{main?.final_code || main?.code}</code></div>
+          <div>Secondary: {kept.filter((i) => i !== main).map((i) => <code key={i.id}>{i.final_code || i.code}</code>)}</div>
+          <small className="muted">The decisions are locked. To change them, generate a new version.</small></div>
+      })()}
       {w.queries.length > 0 && <div className="queries"><b>Documentation queries for the clinician</b><ul>{w.queries.map((q, i) => <li key={i}>{q}</li>)}</ul></div>}
       <table>
         <thead><tr><th>Code</th><th>Description</th><th>Basis</th><th>Decision</th></tr></thead>
@@ -58,7 +68,7 @@ function Worksheet({ w, previousCodes, hasPrevious, absent, canDecide, onChange,
             <td><code>{i.final_code || i.code}</code>{i.decision === 'modified' && <small className="block">was {i.code}</small>}{hasPrevious && <small className="block">{previousCodes.has(norm(i.code)) ? 'Previously suggested' : 'New suggestion'}</small>}</td>
             <td>{i.description}{i.flags.map((f, k) => <span key={k} className="tag warn">{f}</span>)}</td>
             <td><button className="link" onClick={() => setWhy({ title: `${i.code} ${i.description}`, rule: i.rationale, sources: [...(i.quote ? [{ ref: i.evidence[0]?.ref || '', label: 'Quoted words', text: `“${i.quote}”` }] : []), ...i.evidence.map((e) => ({ ref: e.ref, text: e.text }))] })}>{i.origin === 'model' ? 'AI-suggested' : 'In EHR'} · {i.status.replace(/_/g, ' ')}</button></td>
-            <td>{final || i.decision || !canDecide ? <><b>{i.decision || 'Not reviewed'}</b>{i.reason && <small className="block">Reason: {i.reason}</small>}{i.decided_by && <small className="block">Reviewed by: {i.decided_by}</small>}</> : (
+            <td>{final || (i.decision && revising !== i.id) || !canDecide ? <><b>{i.decision || 'Not reviewed'}</b>{i.reason && <small className="block">Reason: {i.reason}</small>}{i.decided_by && <small className="block">Reviewed by: {i.decided_by}</small>}{!final && canDecide && <button className="link" disabled={busy} onClick={() => setRevising(i.id)}>Revise decision</button>}</> : (
               asking?.item === i.id ? (
                 <InlineForm busy={busy} error={error} submit={asking.mode === 'reject' ? 'Reject code' : 'Change code'} onCancel={() => setAsking(null)}
                   fields={asking.mode === 'reject' ? [{ name: 'reason', label: 'Reason for rejecting', min: 5 }] : [{ name: 'code', label: 'Correct ICD-10-CM code', placeholder: 'e.g. J02.0' }, { name: 'reason', label: 'Reason for the change', min: 5 }]}
@@ -68,13 +78,15 @@ function Worksheet({ w, previousCodes, hasPrevious, absent, canDecide, onChange,
                 <button disabled={busy} onClick={() => decide(i.id, { action: 'accept' })}>Accept</button>
                 <button disabled={busy} onClick={() => setAsking({ item: i.id, mode: 'reject' })}>Reject</button>
                 <button disabled={busy} onClick={() => setAsking({ item: i.id, mode: 'modify' })}>Change</button>
+                {i.decision && <button className="link" onClick={() => setRevising(null)}>Keep “{i.decision}”</button>}
               </div>))}</td>
           </tr>))}</tbody>
       </table>
       {absent.length > 0 && <div className="queries"><b>Not suggested in this version — review the earlier version</b><ul>{absent.map((i) => <li key={i.id}>{i.code} · {i.description}{i.decision ? ` · earlier decision: ${i.decision}` : ''}</li>)}</ul><p>Not suggested does not mean the diagnosis is irrelevant.</p></div>}
-      {!final && <div className="actions end"><label>Principal diagnosis <select value={principal} disabled={!canDecide || remaining > 0} onChange={(e) => setPrincipal(e.target.value)}><option value="">choose…</option>
+      {!final && <div className="actions end"><label>Principal diagnosis <select value={principal} disabled={!canDecide || remaining > 0} onChange={(e) => setPicked(e.target.value)}><option value="">choose…</option>
         {w.items.filter((i) => ['accepted', 'modified'].includes(i.decision)).map((i) => <option key={i.id} value={i.id}>{i.final_code || i.code}</option>)}</select></label>
         <button className="primary" disabled={busy || !canDecide || remaining > 0 || !principal} onClick={() => run(async () => { await api(`/coding/${w.id}/finalize`, { method: 'POST', body: { principal_item: principal } }); await onChange() })}>Finalize codes</button>
+        <ErrorNote error={error} />
         <p className="muted small">{!canDecide ? 'Only an attending or HIM coder can finalize.' : remaining ? `Review ${remaining} remaining code(s) before finalizing.` : !principal ? 'Choose a principal diagnosis to finalize.' : 'Ready to finalize.'}</p></div>}
     </article>
   )

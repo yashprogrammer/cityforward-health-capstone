@@ -98,6 +98,7 @@ def decide(wid: str, item_id: str, body: DecideIn, p: Principal = CurrentUser):
     item = next((i for i in r["items"] if i["id"] == item_id), None)
     if item is None:
         raise HTTPException(404, "no such line")
+    was = item["decision"]                      # a coder may revise a line until the worksheet is final; history keeps the earlier answer
     if body.action == "accept":
         item["decision"], item["final_code"] = "accepted", item["code"]
     elif body.action == "reject":
@@ -115,7 +116,7 @@ def decide(wid: str, item_id: str, body: DecideIn, p: Principal = CurrentUser):
         raise HTTPException(422, "action must be accept, reject or modify")
     item["reason"], item["decided_by"] = body.reason, p.user
     audit.log(p, f"coding.{body.action}", r["patient_id"], detail={"id": wid, "code": item["code"], "final": item["final_code"]})
-    hist = [*r["history"], {"at": now_iso(), "by": p.user, "what": f"{body.action} {item['code']}" + (f" -> {item['final_code']}" if body.action == "modify" else "")}]
+    hist = [*r["history"], {"at": now_iso(), "by": p.user, "what": f"{body.action} {item['code']}" + (f" -> {item['final_code']}" if body.action == "modify" else "") + (f" (was {was})" if was else "")}]
     return _view(_save(r, history=hist))
 
 
