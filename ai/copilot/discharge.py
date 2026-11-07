@@ -77,8 +77,9 @@ def prior_auth_agent(ctx: Context) -> AgentResult:
     for sug in priorauth.suggest_services(ctx.chart, ctx.payer):
         if not sug.pa_required:
             continue
-        if priorauth_api.open_request(ctx.chart.patient_id, sug.service_code):
-            notes.append(f"{sug.service_code} already in progress")
+        stay = ctx.chart.current_encounter()
+        if priorauth_api.open_request(ctx.chart.patient_id, sug.service_code, stay.id if stay else None):
+            notes.append(f"{sug.service_code} already in progress or certified")
             continue
         pa = priorauth_api.create_draft_for(ctx.principal, ctx.chart.patient_id, sug.service_code, chart=ctx.chart)
         made.append(pa["id"])

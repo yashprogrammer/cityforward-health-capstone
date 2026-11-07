@@ -12,12 +12,13 @@ import time
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .db import DOCS_DIR, HOTFOLDER, audit, connect, now, row, rows
+from .db import DOCS_DIR, HOTFOLDER, audit, connect, effective_actor, staff_actor, now, row, rows
+from .auth_config import validate_auth_config
 from .pharmacy import reconcile_discharge_meds
 
 UI_DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"
@@ -25,6 +26,34 @@ HOTFOLDER_PATTERN = re.compile(r"^(IP\d{4}-\d{4})_([A-Z_]+?)_(\d{14})\.pdf$")
 USER = "res.etran"  # the legacy UI has no SSO; the demo session is logged in as the resident on duty
 
 app = FastAPI(title="MediTrack HMS v3.4 (internal)")
+
+
+@app.middleware('http')
+async def secure_internal_routes(request: Request, call_next):
+    # Protect internal EHR routes for either verified staff sign-in method.
+    if os.getenv('AUTH_MODE', 'oidc') not in {'local', 'oidc'} or not request.url.path.startswith('/int/') or request.url.path == '/int/session/capabilities':
+        return await call_next(request)
+    from .staff_guard import authorize_internal_request
+    try:
+        staff = authorize_internal_request(request)
+    except HTTPException as exc:
+        denied_staff = getattr(request.state, 'staff', None)
+        if denied_staff:
+            try:
+                with connect() as c:
+                    audit(c, denied_staff['USR_ID'], 'ACCESS_DENIED', f'{request.method} {request.url.path}')
+            except Exception:
+                # A logging failure must never make a denied request succeed.
+                pass
+        return JSONResponse({'detail': exc.detail}, status_code=exc.status_code, headers={'Cache-Control': 'no-store'})
+    request.state.staff = staff
+    context = staff_actor.set(staff['USR_ID'])
+    try:
+        response = await call_next(request)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    finally:
+        staff_actor.reset(context)
 
 
 # ---------------------------------------------------------------- census / patient
@@ -60,6 +89,15 @@ def ip_detail(ip_no: str):
         if not adm:
             raise HTTPException(404, "IP NO NOT FOUND")
         q = lambda sql: rows(c, sql, ip_no)  # noqa: E731
+        links = [
+            {**lnk, "HREF": _link_href(lnk, ip_no, adm["MRN"])}
+            for lnk in rows(c, "SELECT * FROM SYS_EXT_LNK WHERE IS_ACTV=1 ORDER BY LNK_ID")
+        ]
+        # The integrated course view adds its launch without altering the
+        # shared legacy link table or changing the legacy-only lesson.
+        if os.getenv('AUTH_MODE') == 'oidc' and os.getenv('INTEGRATED_SMART_LAUNCH') == '1':
+            links.append({'LNK_ID': -1, 'LNK_LBL': 'AI Clinical Insights', 'DISP_MD': 'SMART',
+                          'HREF': f'/smart/ehr-launch?lnk_id=-1&ip_no={ip_no}'})
         return {
             "adm": adm,
             "diags": q("SELECT * FROM IP_DIAG_DTL WHERE IP_NO=%s ORDER BY DIAG_TYP DESC, ID"),
@@ -72,10 +110,7 @@ def ip_detail(ip_no: str):
             "auths": q("SELECT * FROM PYR_AUTH_DTL WHERE IP_NO=%s ORDER BY SUBM_DT"),
             "visits": rows(c, "SELECT IP_NO, ADM_DT, ENC_CLS, ENC_TYP, ADM_RSN FROM IP_ADM_DTL WHERE PT_ID=%s AND IP_NO<>%s ORDER BY ADM_DT DESC",
                            adm["PT_ID"], ip_no),
-            "links": [
-                {**lnk, "HREF": _link_href(lnk, ip_no, adm["MRN"])}
-                for lnk in rows(c, "SELECT * FROM SYS_EXT_LNK WHERE IS_ACTV=1 ORDER BY LNK_ID")
-            ],
+            "links": links,
         }
 
 
@@ -123,7 +158,7 @@ def save_manual_summary(ip_no: str, body: ManualSummary):
     with connect() as c:
         c.execute("""INSERT INTO IP_DSCH_SUMM VALUES (%s,%s,%s,%s) ON CONFLICT (IP_NO)
                      DO UPDATE SET SUMM_TXT=EXCLUDED.SUMM_TXT, CRT_BY=EXCLUDED.CRT_BY, CRT_DT=EXCLUDED.CRT_DT""",
-                  (ip_no, body.text, USER, now()))
+                  (ip_no, body.text, effective_actor(USER), now()))
         audit(c, USER, "MANUAL_SUMMARY_SAVED", ip_no)
     return {"ok": True}
 
@@ -159,7 +194,7 @@ async def upload_doc(ip_no: str, doc_typ: str = Form(...), file: UploadFile = Fi
     (DOCS_DIR / file_nm).write_bytes(await file.read())
     with connect() as c:
         c.execute("INSERT INTO PT_DOC (IP_NO, DOC_TYP, FILE_NM, UPL_DT, UPL_BY) VALUES (%s,%s,%s,%s,%s)",
-                  (ip_no, doc_typ, file_nm, now(), USER))
+                  (ip_no, doc_typ, file_nm, now(), effective_actor(USER)))
         audit(c, USER, f"DOC_UPLOAD:{doc_typ}", ip_no)
         _emit(c, "document.added", ip_no, {"docType": doc_typ, "fileName": file_nm})
     return {"ok": True}
@@ -200,12 +235,24 @@ def hotfolder_importer() -> None:
 
 @app.on_event("startup")
 def start_background_jobs():
+    validate_auth_config()
+    if os.getenv('AUTH_MODE') in {'local', 'oidc'}:
+        from .staff_sessions import migrate
+        migrate()
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     HOTFOLDER.mkdir(parents=True, exist_ok=True)
     threading.Thread(target=hotfolder_importer, daemon=True).start()
     if os.getenv("WEBHOOK_DISPATCHER", "on") != "off":
         from .events import start_dispatcher
         start_dispatcher()
+
+
+@app.get("/int/session/capabilities")
+def session_capabilities():
+    if os.getenv('AUTH_MODE', 'oidc') in {'local', 'oidc'}:
+        return {'demo_user_switcher': False, 'auth_mode': os.getenv('AUTH_MODE', 'oidc')}
+    cfg = validate_auth_config()
+    return {"demo_user_switcher": cfg.mode == "demo"}
 
 
 def _emit(conn, event_type: str, ip_no: str, extra: dict | None = None) -> None:
@@ -231,7 +278,7 @@ def list_links():
 def add_link(body: ExtLink):
     with connect() as c:
         c.execute("INSERT INTO SYS_EXT_LNK (LNK_LBL, LNK_URL, DISP_MD, IS_ACTV, CRT_BY, CRT_DT) VALUES (%s,%s,%s,1,%s,%s)",
-                  (body.label, body.url, body.mode, "it.admin", now()))
+                  (body.label, body.url, body.mode, effective_actor("it.admin"), now()))
         audit(c, "it.admin", "EXT_LINK_ADDED", body.label)
     return {"ok": True}
 
@@ -239,7 +286,9 @@ def add_link(body: ExtLink):
 @app.post("/int/admin/extlinks/{lnk_id}/toggle")
 def toggle_link(lnk_id: int):
     with connect() as c:
-        c.execute("UPDATE SYS_EXT_LNK SET IS_ACTV = 1 - IS_ACTV WHERE LNK_ID=%s", (lnk_id,))
+        changed = c.execute("UPDATE SYS_EXT_LNK SET IS_ACTV = 1 - IS_ACTV WHERE LNK_ID=%s", (lnk_id,))
+        if changed.rowcount:
+            audit(c, 'it.admin', 'EXT_LINK_TOGGLED', str(lnk_id))
     return {"ok": True}
 
 
@@ -279,6 +328,14 @@ def _mount_interop() -> None:
 
 
 _mount_interop()
+
+if os.getenv('AUTH_MODE') in {'local', 'oidc'}:
+    from .local_login import router as local_login_router
+    app.include_router(local_login_router)
+
+if os.getenv('AUTH_MODE') == 'oidc':
+    from .entra_login import router as entra_login_router
+    app.include_router(entra_login_router)
 
 # ---------------------------------------------------------------- UI
 if UI_DIST.exists():

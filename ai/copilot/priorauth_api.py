@@ -97,9 +97,9 @@ def create_draft(patient_id: str, body: DraftIn, p: Principal = CurrentUser):
 OPEN_STATES = ("DRAFT", "APPROVED", "SUBMITTED", "QUEUED", "PENDED")
 
 
-def open_request(patient_id: str, service_code: str) -> dict | None:
+def open_request(patient_id: str, service_code: str, encounter_id: str | None = None) -> dict | None:
     with db.system() as c:
-        return c.execute("SELECT id FROM prior_auth WHERE patient_id=%s AND service_code=%s AND status = ANY(%s)", (patient_id, service_code, list(OPEN_STATES))).fetchone()
+        return c.execute("SELECT id, status FROM prior_auth WHERE patient_id=%s AND service_code=%s AND (%s::text IS NULL OR encounter_id=%s) AND status = ANY(%s) ORDER BY created_at DESC LIMIT 1", (patient_id, service_code, encounter_id, encounter_id, [*OPEN_STATES, 'CERTIFIED'])).fetchone()
 
 
 def create_draft_for(p: Principal, patient_id: str, service_code: str, chart=None) -> dict:
@@ -108,6 +108,10 @@ def create_draft_for(p: Principal, patient_id: str, service_code: str, chart=Non
     rt = _rt()
     chart = chart or load_chart(rt.get_fhir(), patient_id)
     authorize(p, "priorauth.draft", patient_id, unit=chart.unit)
+    stay = chart.current_encounter()
+    existing = open_request(patient_id, service_code, stay.id) if stay else None
+    if existing:
+        raise HTTPException(409, f"An existing {existing['status'].lower()} request already exists for this service and stay ({existing['id']}).")
     rag.index_chart(chart, p)       # the retrieval step needs a fresh index of this chart
     try:
         rule = deps.get_payer().rule(service_code, chart.payer)

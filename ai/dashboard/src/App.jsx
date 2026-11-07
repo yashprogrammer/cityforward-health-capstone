@@ -20,6 +20,12 @@ export default function App() {
   const [about, setAbout] = useState(false)
 
   useEffect(() => {
+    const expired = () => { setToken(null); setSession(null); setData(null); setWhy(null); setPhase('expired') }
+    window.addEventListener('copilot-session-expired', expired)
+    return () => window.removeEventListener('copilot-session-expired', expired)
+  }, [])
+
+  useEffect(() => {
     const q = new URLSearchParams(location.search)
     const path = location.pathname
     ;(async () => {
@@ -47,6 +53,7 @@ export default function App() {
 
   if (phase === 'start') return <Centered title="Open from the patient chart">This app is launched from inside the EHR so it knows which patient you are looking at. In MediTrack open a patient and choose <b>AI Clinical Insights</b>.</Centered>
   if (phase === 'signing-in') return <Centered title="Signing you in…">Connecting to the EHR securely (SMART on FHIR).</Centered>
+  if (phase === 'expired') return <Centered title="Session expired">Return to MediTrack, sign in if needed, and reopen AI Clinical Insights from the patient chart.</Centered>
   if (phase === 'error') return <Centered title="Could not open the patient" bad>{error}</Centered>
   if (phase === 'no-access') return <NoAccess session={session} onGranted={async () => { await reload(); setPhase('ready') }} />
 
@@ -99,7 +106,7 @@ function NoAccess({ session, onGranted }) {
       <textarea id="reason" rows={3} style={{ width: '100%', font: 'inherit', padding: '.5rem' }} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Patient transferred to my unit overnight; need the discharge plan to continue care" />
       {err && <p role="alert" style={{ color: 'var(--bad)' }}>{err}</p>}
       <div className="actions end"><button className="primary" disabled={!ok || busy}>{busy ? 'Requesting…' : 'Request emergency access'}</button></div>
-      <p className="muted small">Not an emergency? Open a patient on your own unit, or switch to the user assigned to this unit in MediTrack.</p>
+      <p className="muted small">Not an emergency? Open a patient on your own unit, or ask the clinician assigned to this unit.</p>
     </form></div>
   )
 }

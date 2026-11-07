@@ -1,0 +1,13 @@
+# Use with docker-compose.yml and the distinct project/ports in the walkthrough.
+# Building these images does not overwrite the user's normal Compose images.
+services:
+  keygen:
+    image: cityforward-integrated-staging-ai:local
+  ai:
+    image: cityforward-integrated-staging-ai:local
+  seed:
+    image: cityforward-integrated-staging-customer:local
+  meditrack:
+    image: cityforward-integrated-staging-customer:local
+  payer:
+    image: cityforward-integrated-staging-customer:local

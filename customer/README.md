@@ -8,6 +8,8 @@ on site, then build the AI layer next to it (`poc/` and `ai/` in the later branc
 
 ## Run it
 
+For the integrated local demo's staff login and account setup, see [Local staff login](../docs/LOCAL_LOGIN.md).
+
 ```bash
 docker compose up --build        # from the repo root; Postgres, MediTrack, mock payer, gateway
 open http://localhost:8001       # MediTrack
@@ -44,7 +46,7 @@ inconsistent with the admitting diagnosis, attending NPI missing, implant record
 
 ## What MediTrack does NOT do (so the AI layer has to)
 
-* no SSO: MediTrack signs in a hard-coded resident; the banner's "act as" switch only exists for demos
+* no SSO: the integrated local demo uses its own simple staff login; it is not a production identity provider
 * the EHR's FHIR API does not enforce unit-level (row-level) access for user tokens: it is the source of truth, not the policy engine
 * no vector search, no summarization, no coding assistance
 * events are at-least-once with IDs only: consumers must be idempotent and fetch through FHIR

@@ -1,0 +1,184 @@
+# Integrating the AI system with the legacy EHR
+
+This is a work-in-progress teaching record. It separates confirmed behavior from
+steps that still need implementation and verification. Use synthetic data only.
+
+## Starting point
+
+- The Azure legacy EHR and the separate Streamlit POC share a temporary VM. The
+  POC reads the EHR's FHIR API; it is not the integrated dashboard.
+- The existing integrated code contains an AI service, a dashboard, a SMART
+  launch, FHIR access, a simulated payer, webhooks, and an AI database.
+- The integrated checkout had uncommitted work. We copied its source and local
+  authentication work into an isolated `course/integrated-live-ehr` worktree;
+  the original checkout was not reset or overwritten.
+- The running legacy VM and its patient data remain in place. No database reset
+  or reseed is part of this work.
+- The VM already has an Azure auto-shutdown schedule to control spend. It is not
+  a hard cap: disk, public IP, model usage, and billing delays are separate.
+
+## The intended connection
+
+```text
+Clinician -> legacy EHR -> SMART launch -> integrated AI dashboard
+                   |                           |
+                   +------ FHIR API <----------+
+                   +------ events/webhooks ---> AI service -> AI database
+                                                |        -> simulated payer
+                                                +--------> Azure Foundry
+```
+
+The AI database is separate from the legacy EHR database. FHIR reads the EHR's
+chart; the AI database supports the AI service's own workflows. An existing POC
+remains separate. Preserve the existing legacy data when registering clients,
+adding webhook configuration, and provisioning the AI database.
+
+## Authentication gate: not yet complete
+
+The integrated code refuses deployment startup while staff OIDC is unfinished.
+The deployed legacy teaching image has a user selector rather than a verified
+staff session. The integrated service expects session-bound SMART tokens and
+checks the originating staff session. These are not interchangeable. Network
+restriction alone does not provide staff authentication. Do not bypass the
+deployment guard, disable session checks, or present the existing selector as
+an authenticated deployment.
+
+Before a deployed cutover, implement and verify the identity provider login,
+explicit staff identity mapping, protected EHR routes, session-bound SMART
+launch, role and patient authorization, logout/revocation, and negative tests.
+Then deploy alongside the existing legacy service, and switch traffic only after
+the new flow is verified and rollback is prepared.
+
+## Verification record
+
+The deployed integrated system has not yet been enabled.
+
+### 1. Validate on an isolated local stack
+
+The verification stack must have its own Compose project, ports, images, and
+volumes. Never point destructive test fixtures at an existing hospital database.
+For a fresh reproduction, from this worktree:
+
+```bash
+export PG_PORT=15441 PAYER_PORT=18096 MEDITRACK_PORT=18095
+export PUBLIC_BASE_URL=http://localhost:18095 LLM_PROVIDER=offline
+docker compose -p cityforward-integrated-staging -f docker-compose.yml -f deploy/course/integrated-staging.yml build meditrack
+docker compose -p cityforward-integrated-staging -f docker-compose.yml -f deploy/course/integrated-staging.yml build ai
+docker compose -p cityforward-integrated-staging -f docker-compose.yml -f deploy/course/integrated-staging.yml up -d --no-build
+python deploy/course/verify_local_integration.py
+```
+
+The verification script provisions a temporary random password only in the
+isolated staging EHR, logs in as the synthetic attending, opens a chart, follows
+the SMART authorization-code/PKCE flow, calls the AI dashboard and summary, then
+logs out and confirms the old token is rejected. It does not print the password
+or token. Expected: three `passed` lines. The offline provider means this verifies
+the integration and fallback, not a live model.
+
+On this run the same workflow passed using previously built local login images
+with the current backend source mounted into the isolated containers. The
+customer login test and 13 AI/auth/redaction tests also passed against a separate
+throwaway PostgreSQL instance. These results do not verify an Azure EHR launch.
+
+To reproduce those database tests, first create a **new disposable** PostgreSQL
+container. These tests intentionally reset its data:
+
+```bash
+docker run -d --name cityforward-integration-test-db \
+  -p 127.0.0.1:15440:5432 -e POSTGRES_PASSWORD=postgres \
+  -v "$PWD/customer/platform/compose/initdb:/docker-entrypoint-initdb.d:ro" \
+  pgvector/pgvector:pg16
+export CITYFORWARD_DISPOSABLE_TEST_DB=1
+export MEDITRACK_DB_URL=postgresql://meditrack:meditrack@localhost:15440/meditrack
+export COPILOT_DB_URL=postgresql://copilot:copilot@localhost:15440/copilot
+APP_ENV=local AUTH_MODE=local python -m pytest -q customer/tests/test_local_login.py
+APP_ENV=local AUTH_MODE=demo python -m pytest -q \
+  ai/tests/test_foundry_identity.py ai/tests/test_smart_token_verification.py \
+  ai/tests/test_redact.py customer/tests/test_auth_config.py deploy/tests/test_auth_guard.py
+```
+
+Wait until `docker exec cityforward-integration-test-db pg_isready -U postgres`
+reports it is accepting connections before running pytest. Afterward stop and
+remove this disposable container; it is unrelated to the normal local EHR.
+The passwords above are the deliberately non-secret credentials in the demo
+database initializer, not real staff or cloud credentials.
+
+To remove only this temporary stack and its synthetic volumes when finished:
+
+```bash
+docker compose -p cityforward-integrated-staging -f docker-compose.yml -f deploy/course/integrated-staging.yml down --volumes
+```
+
+### 2. Prepare model authentication
+
+The integrated model adapter supports `FOUNDRY_AUTH=managed_identity` in
+addition to the existing key-based setup. It obtains a renewable Entra token
+instead of storing an API key. A harmless test prompt using this adapter and the
+existing VM identity successfully reached the Foundry deployment. This was an
+adapter test, not a deployed integrated application or a patient-chart test.
+
+### 3. Deploy the integrated system
+
+**Deployed alongside the legacy demo; browser sign-in not yet verified.** State
+checked on 2026-11-07, from outside the VM:
+
+- The secured EHR, the integrated AI service (with its own AI database) and an
+  HTTPS gateway on port 8443 run beside the legacy and POC containers.
+- Port 8443 is open only to the owner's current public IP (NSG rule
+  `course-integrated-https`). If your network changes, update that rule.
+- `/` serves the staff sign-in page with a valid certificate, `/int/census`
+  returns 401 without a session, `/ai/healthz` returns 200, and
+  `/auth/entra/start` redirects to the Microsoft sign-in page.
+- Verified in a browser on 2026-11-07 (owner signed in with Microsoft): the
+  Entra callback created a staff session (Dr. Priya Raman, ATTENDING) and the
+  census loaded; opening IP2610-0142 and the AI Clinical Insights tab ran the
+  SMART launch and token exchange and loaded the dashboard and readiness
+  checks; "Ask the chart" returned a grounded answer from the live Foundry
+  model (`LLM_PROVIDER=foundry`, `FOUNDRY_AUTH=managed_identity`); after
+  "Log out", `/auth/session`, `/int/census` and the AI dashboard API all
+  returned 401.
+- Verified on Azure, second session (same day, signed in as the ATTENDING):
+  - Access scope: opening Doyle (IP2610-0151, unit 5S-ORTH) from the EHR and
+    then the AI tab showed "This patient is on another unit" with an audited
+    emergency-access request; the AI API returned 403. Break-glass was NOT used.
+  - Prior authorization: Hale's tab loaded (200) and correctly suggests nothing
+    ("Nothing in the notes suggests a service that needs prior authorization").
+    The patients that do have suggestions (Doyle: SNF-ADM and E0143; Whitaker:
+    E1390) are outside the attending's unit and are meant for the case manager
+    or PA coordinator roles, so the drafting path was not exercised.
+  - Coding: "Suggest codes for this stay" returned worksheet CW-0A50F6EBCB
+    (version 1, OPEN) with documentation queries (provisional STEMI, unspecified
+    hyperlipidemia) and four lines. Accepting I10 recorded the decision as
+    reviewed by `attending.raman`; "Finalize codes" stayed disabled with
+    "Review 3 remaining code(s) before finalizing". Finalize was not clicked.
+  - No 5xx responses in the AI service log during these steps.
+  - Break-glass, with the owner's approval: emergency access to Doyle was
+    requested with the reason "Owner-approved integration test ... on
+    synthetic demo data (not a real emergency)". The dashboard then loaded.
+    This creates an audit entry and a privacy-officer review item on the Azure
+    demo; the 4-hour grant ends on its own.
+  - Prior authorization on Doyle: the tab suggested E0143 (walker) and SNF-ADM,
+    each with the quoted chart passage. "Prepare draft" for SNF-ADM created a
+    draft (POST 201) that lists each payer requirement as Documented (with
+    "Show evidence") or Not documented (the discharge plan, with a "Provide"
+    action). "Approve for submission" was NOT clicked, so nothing reached the
+    simulated payer.
+- Not yet verified on Azure: that a SMART token copied before logout is
+  rejected afterwards (checked only on the isolated local stack), prior
+  authorization approval, submission and the payer decision, coding finalize
+  and write-back, webhooks into the AI service, roles other than ATTENDING,
+  the privacy-officer review of the break-glass entry, and sign-in by an Entra
+  account that is not mapped to a staff member.
+
+Do not run the destructive legacy seed against the existing Azure database.
+
+### Local test database incident
+
+An initial test invocation mistakenly used the existing local Compose database
+on port 5432. Existing fixtures reseeded the local MediTrack tables and cleared
+several local AI working tables. This may have lost user-created local demo data.
+The Azure demo database was not used by the tests. A workspace search found no
+database backup; do not overwrite the current database in an attempted restore.
+Fixtures now require an explicit disposable-database opt-in before they reseed.
+Run subsequent database tests only against a separately created disposable
+database with both test database URLs set explicitly.

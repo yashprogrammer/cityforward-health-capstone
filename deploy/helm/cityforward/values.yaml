@@ -1,6 +1,6 @@
 # Defaults are the secure, production-shaped choice; values-kind.yaml relaxes only what a laptop needs.
 global:
-  environment: dev
+  environment: deployment
   imagePullPolicy: IfNotPresent
 
 images:
@@ -25,6 +25,9 @@ externalDatabase:
   secretName: cityforward-db     # keys: meditrack-url, copilot-url (and, for in-cluster Postgres, the generated role passwords)
 
 meditrack:
+  auth:
+    environment: deployment
+    mode: oidc
   replicas: 1                    # the legacy EHR is a single instance by design
   seedForce: false               # true = the next install/upgrade wipes MediTrack and reloads the synthetic data (demo reset)
   publicBaseUrl: ""              # what browsers use (token audience). Empty = derived from ingress.host

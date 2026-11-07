@@ -1,4 +1,7 @@
 import os
+_explicit_test_database = bool(os.getenv('MEDITRACK_DB_URL'))
+os.environ.setdefault("APP_ENV", "local")
+os.environ.setdefault("AUTH_MODE", "demo")
 import sys
 from pathlib import Path
 
@@ -15,6 +18,8 @@ os.environ.setdefault("MEDITRACK_HOTFOLDER", str(Path(__file__).resolve().parent
 @pytest.fixture(scope="session")
 def seeded():
     """Reseed MediTrack once per test session (about 3 seconds)."""
+    if os.getenv('CITYFORWARD_DISPOSABLE_TEST_DB') != '1' or not _explicit_test_database:
+        pytest.fail('This fixture reseeds MediTrack. Explicitly set MEDITRACK_DB_URL to a disposable database and set CITYFORWARD_DISPOSABLE_TEST_DB=1.')
     import psycopg
     try:
         psycopg.connect(os.environ["MEDITRACK_DB_URL"], connect_timeout=3).close()

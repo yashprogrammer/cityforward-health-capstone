@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from . import smart
-from .db import audit, connect, now, row, rows
+from .db import audit, connect, effective_actor, now, row, rows
 
 router = APIRouter()
 TYPE_PREFIX = "org.cityforward.meditrack."
@@ -130,7 +130,7 @@ def add_webhook(body: WebhookIn):
         raise HTTPException(400, f"UNKNOWN EVENT TYPES: {unknown}")
     with connect() as c:
         wh_id = c.execute("INSERT INTO SYS_WEBHOOK (WH_NM, WH_URL, WH_SECRET, EVENTS, IS_ACTV, CRT_BY, CRT_DT) VALUES (%s,%s,%s,%s,1,%s,%s) RETURNING WH_ID",
-                          (body.name, body.url, body.secret, body.events, "it.admin", now())).fetchone()["WH_ID"]
+                          (body.name, body.url, body.secret, body.events, effective_actor('it.admin'), now())).fetchone()["WH_ID"]
         audit(c, "it.admin", "WEBHOOK_ADDED", body.name)
     return {"ok": True, "id": wh_id}
 
@@ -138,7 +138,9 @@ def add_webhook(body: WebhookIn):
 @router.post("/int/admin/webhooks/{wh_id}/toggle")
 def toggle_webhook(wh_id: int):
     with connect() as c:
-        c.execute("UPDATE SYS_WEBHOOK SET IS_ACTV = 1 - IS_ACTV WHERE WH_ID=%s", (wh_id,))
+        changed = c.execute("UPDATE SYS_WEBHOOK SET IS_ACTV = 1 - IS_ACTV WHERE WH_ID=%s", (wh_id,))
+        if changed.rowcount:
+            audit(c, 'it.admin', 'WEBHOOK_TOGGLED', str(wh_id))
     return {"ok": True}
 
 

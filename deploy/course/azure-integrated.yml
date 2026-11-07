@@ -1,0 +1,99 @@
+# Separate secured course view on the existing demo VM. Uses the existing EHR
+# database, document volume, payer and network without replacing the legacy app.
+services:
+  keygen:
+    image: cityforward-integrated-ai:course
+    build: {context: ../.., dockerfile: ai/Dockerfile}
+    user: '0'
+    entrypoint: ['/bin/sh', '-c', 'python scripts/gen_keys.py /keys && if [ ! -f /ehrkeys/smart_signing_key.pem ]; then python scripts/gen_keys.py /ehrkeys && mv /ehrkeys/ai-backend.pem /ehrkeys/smart_signing_key.pem; fi && chown -R 10001:10001 /keys /ehrkeys && chmod 600 /keys/ai-backend.pem /ehrkeys/smart_signing_key.pem']
+    restart: 'no'
+    volumes: [integrated_keys:/keys, integrated_ehr_keys:/ehrkeys]
+  meditrack-secured:
+    image: cityforward-integrated-customer:course
+    build: {context: ../../customer}
+    restart: unless-stopped
+    environment:
+      APP_ROLE: meditrack
+      APP_ENV: deployment
+      AUTH_MODE: oidc
+      ENABLE_ENTRA_OIDC: '1'
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID}
+      ENTRA_MANAGED_IDENTITY_CLIENT_ID: ${ENTRA_MANAGED_IDENTITY_CLIENT_ID}
+      PUBLIC_BASE_URL: ${INTEGRATED_BASE_URL}
+      INTEGRATED_SMART_LAUNCH: '1'
+      MEDITRACK_DB_URL: postgresql://meditrack:meditrack@db:5432/meditrack
+      WEBHOOK_DISPATCHER: 'off'
+    volumes:
+      - legacy_docs:/data/documents
+      - integrated_hotfolder:/data/import_hotfolder
+      - integrated_ehr_keys:/app/meditrack/data
+    depends_on:
+      keygen: {condition: service_completed_successfully}
+  register:
+    profiles: ['setup']
+    image: cityforward-integrated-customer:course
+    entrypoint: ['python', '-']
+    environment:
+      MEDITRACK_DB_URL: postgresql://meditrack:meditrack@db:5432/meditrack
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
+      ENTRA_USER_OID: ${ENTRA_USER_OID}
+      INTEGRATED_BASE_URL: ${INTEGRATED_BASE_URL}
+      INTEGRATED_WEBHOOK_SECRET: ${INTEGRATED_WEBHOOK_SECRET}
+    volumes: ['integrated_keys:/keys:ro']
+  ai-integrated:
+    image: cityforward-integrated-ai:course
+    build: {context: ../.., dockerfile: ai/Dockerfile}
+    restart: unless-stopped
+    environment:
+      COPILOT_DB_URL: postgresql://cf_integrated_ai:${INTEGRATED_DB_PASSWORD}@db:5432/cityforward_integrated_ai
+      MEDITRACK_BASE_URL: http://meditrack-secured:8001
+      MEDITRACK_SMART_ISSUER: ${INTEGRATED_BASE_URL}
+      MEDITRACK_SMART_AUDIENCE: ${INTEGRATED_BASE_URL}/fhir
+      SMART_SESSION_REQUIRED: 'true'
+      PAYER_BASE_URL: http://payer:8003
+      PAYER_API_KEY: ${PAYER_API_KEY:-demo-payer-key}
+      AI_BACKEND_KEY_FILE: /keys/ai-backend.pem
+      AI_WEBHOOK_SECRET: ${INTEGRATED_WEBHOOK_SECRET}
+      LLM_PROVIDER: foundry
+      FOUNDRY_AUTH: managed_identity
+      LLM_BASE_URL: ${FOUNDRY_BASE_URL}
+      LLM_MODEL: ${FOUNDRY_MODEL}
+      COPILOT_DAILY_BUDGET_USD: '0.20'
+      LLM_MAX_OUTPUT_TOKENS: '2000'
+      EMBEDDER: hash
+    volumes: ['integrated_keys:/keys:ro']
+    depends_on:
+      keygen: {condition: service_completed_successfully}
+      meditrack-secured: {condition: service_started}
+  gateway-integrated:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        cert=$$(find /legacy-certs/caddy/certificates -name "$${DEMO_DOMAIN}.crt" -print -quit)
+        test -n "$$cert" && test -f "$${cert%.crt}.key" || exit 1
+        export CERT_FILE="$$cert" KEY_FILE="$${cert%.crt}.key"
+        exec caddy run --config /etc/caddy/Caddyfile
+    environment:
+      DEMO_DOMAIN: ${DEMO_DOMAIN}
+    volumes:
+      - legacy_certs:/legacy-certs:ro
+      - ./Caddyfile.integrated:/etc/caddy/Caddyfile:ro
+    ports: ['8443:8443']
+    depends_on: [meditrack-secured, ai-integrated]
+networks:
+  default:
+    external: true
+    name: cityforward-course_default
+volumes:
+  integrated_keys:
+  integrated_ehr_keys:
+  integrated_hotfolder:
+  legacy_docs:
+    external: true
+    name: cityforward-course_docs
+  legacy_certs:
+    external: true
+    name: cityforward-course_caddy_data

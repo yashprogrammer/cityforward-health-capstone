@@ -1,4 +1,5 @@
 # Azure Kubernetes Service: managed PostgreSQL (private), Azure Files for the hot folder, Key Vault-backed secrets, pinned image digests, enforced network policy.
+global: {environment: deployment}
 images:
   customer: {repository: cityforwardacr.azurecr.io/cityforward-customer, tag: "1.0.0"}     # replace tag with @sha256:<digest> from the release pipeline
   ai: {repository: cityforwardacr.azurecr.io/cityforward-ai, tag: "1.0.0"}
@@ -8,6 +9,7 @@ ingress:
   host: copilot.hospital.example
   tls: {enabled: true, secretName: cityforward-tls}
 meditrack:
+  auth: {environment: deployment, mode: oidc}
   publicBaseUrl: https://copilot.hospital.example
   persistence: {size: 20Gi, storageClass: azurefile-csi, accessMode: ReadWriteMany}
 copilot:

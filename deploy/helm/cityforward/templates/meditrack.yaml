@@ -1,3 +1,12 @@
+{{- if and (eq .Values.meditrack.auth.mode "demo") (or (ne .Values.meditrack.auth.environment "local") (ne .Values.global.environment "local")) }}
+{{- fail "Demo authentication is only allowed in the explicit local profile" }}
+{{- end }}
+{{- if and (eq .Values.meditrack.auth.mode "local") (or (ne .Values.meditrack.auth.environment "local") (ne .Values.global.environment "local")) }}
+{{- fail "Local password login is only allowed in the explicit local profile" }}
+{{- end }}
+{{- if and (eq .Values.global.environment "deployment") (ne .Values.meditrack.auth.environment "deployment") }}
+{{- fail "Deployed profiles require deployment authentication settings" }}
+{{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -47,14 +56,16 @@ spec:
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           env:
             - {name: APP_ROLE, value: meditrack}
+            - {name: APP_ENV, value: {{ .Values.meditrack.auth.environment | quote }}}
+            - {name: AUTH_MODE, value: {{ .Values.meditrack.auth.mode | quote }}}
             - {name: MEDITRACK_DB_URL, valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.secretName }}, key: meditrack-url}}}
             - {name: PUBLIC_BASE_URL, value: {{ include "cf.publicBase" . | quote }}}
             - {name: SMART_SIGNING_KEY_PEM, valueFrom: {secretKeyRef: {name: cityforward-meditrack-signing, key: pem}}}
             - {name: MEDITRACK_DOCS_DIR, value: /data/documents}
             - {name: MEDITRACK_HOTFOLDER, value: /data/import_hotfolder}
           ports: [{name: http, containerPort: 8001}]
-          readinessProbe: {httpGet: {path: /int/healthz, port: http}, periodSeconds: 5}
-          livenessProbe: {httpGet: {path: /int/healthz, port: http}, periodSeconds: 20, failureThreshold: 6}
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 20, failureThreshold: 6}
           resources: {{- toYaml .Values.meditrack.resources | nindent 12 }}
           securityContext: {{- include "cf.containerSecurity" . | nindent 12 }}
           volumeMounts:

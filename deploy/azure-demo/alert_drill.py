@@ -20,6 +20,7 @@ import argparse
 import base64
 import hashlib
 import http.client
+import ipaddress
 import json
 import secrets
 import ssl
@@ -77,7 +78,22 @@ def kubectl(args, *a, check=True):
 
 
 def smart_token(base: str, user: str) -> str:
-    """The same authorization-code + PKCE flow the dashboard performs, for a named MediTrack user. The token is never printed."""
+    """Demo-only impersonation helper; never use it as a deployed staff-login test."""
+    parsed = urllib.parse.urlsplit(base)
+    host = parsed.hostname or ''
+    try:
+        loopback = host == 'localhost' or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    if parsed.scheme not in ('http', 'https') or not loopback:
+        raise SystemExit('Demo user-switching test is restricted to a loopback endpoint')
+    status, _, raw = http_get(f'{base}/int/session/capabilities')
+    try:
+        demo = status == 200 and json.loads(raw).get('demo_user_switcher') is True
+    except (ValueError, AttributeError):
+        demo = False
+    if not demo:
+        raise SystemExit('Endpoint has not explicitly enabled local demo user switching')
     cookie = {"Cookie": f"mt_user={user}"}
     links = json.loads(http_get(f"{base}/int/admin/extlinks")[2])
     lnk = next(entry["LNK_ID"] for entry in links if entry["DISP_MD"] == "SMART" and entry.get("IS_ACTV", 1))

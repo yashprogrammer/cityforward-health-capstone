@@ -11,6 +11,7 @@
 #   deploy/azure-demo/demo.sh status      what exists and what it costs per hour
 #
 # Anything that creates, starts, stops or deletes cloud resources needs CF_APPROVED=yes, set deliberately for that one command.
+# SECURITY GATE: up, redeploy, resume and start are disabled until the staff-authentication release checks pass. Stop/down remain available.
 # No secret is printed, written to the repo, or passed as an argument: see azure_secrets.py and azure_db_roles.py.
 set -euo pipefail
 set +x
@@ -251,6 +252,8 @@ cmd_status() {
 }
 
 case "${1:-}" in
-  plan) cmd_plan ;; providers) cmd_providers ;; up) cmd_up ;; redeploy) cmd_redeploy "$@" ;; resume) cmd_resume ;; smoke) cmd_smoke ;; stop) cmd_stop ;; start) cmd_start ;; down) cmd_down ;; status) cmd_status ;;
+  plan) cmd_plan ;; providers) cmd_providers ;;
+  up|redeploy|resume|start) die "Azure startup and deployment are disabled until deployment authentication is implemented and verified" ;;
+  smoke) cmd_smoke ;; stop) cmd_stop ;; down) cmd_down ;; status) cmd_status ;;
   *) sed -n '2,13p' "$0"; exit 2 ;;
 esac

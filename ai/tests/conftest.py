@@ -1,5 +1,9 @@
 import json
 import os
+_explicit_test_databases = bool(os.getenv('MEDITRACK_DB_URL') and os.getenv('COPILOT_DB_URL'))
+os.environ.setdefault("APP_ENV", "local")
+os.environ.setdefault("AUTH_MODE", "demo")
+os.environ.setdefault("SMART_SESSION_REQUIRED", "false")
 import sys
 from pathlib import Path
 
@@ -41,6 +45,8 @@ class ScriptedLLM:
 @pytest.fixture(scope="session")
 def meditrack():
     """The customer's EHR, seeded, running in-process; our backend client registered with it (what hospital IT does)."""
+    if os.getenv('CITYFORWARD_DISPOSABLE_TEST_DB') != '1' or not _explicit_test_databases:
+        pytest.fail('Database tests reseed data. Explicitly set both database URLs to a disposable database and set CITYFORWARD_DISPOSABLE_TEST_DB=1.')
     import psycopg
     from evalkit.harness import meditrack_stack
     try:

@@ -3,6 +3,8 @@
 The Udemy capstone for the Forward Deployed Engineer course, built from the lead's sheet ("Capstone 1, Healthcare: CityForward Health").
 Decisions from the grill-me rounds of 2026-10-23. All organizations, people and patients are fictional; patient data is synthetic (Synthea).
 
+The identity/SSO entry below records the original design, not the current local implementation. The integrated local demo now uses the staff-password login in [LOCAL_LOGIN.md](LOCAL_LOGIN.md); deployed SSO has not been implemented or validated.
+
 ## The premise
 
 - **The customer's world is given, not built by learners.** CityForward Health (US) runs **MediTrack**, a legacy EHR, plus a hospital **Kubernetes platform** run by its IT team. The instructor *explains* both; learners study them like an FDE on day one.

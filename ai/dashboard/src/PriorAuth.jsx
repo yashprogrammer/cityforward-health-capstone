@@ -6,14 +6,15 @@ const LABEL = { met: 'Documented', candidate: 'Found: please confirm', missing: 
                 accepted: 'Confirmed', attested: 'Attested', clinician_provided: 'Provided by clinician' }
 const GOOD = new Set(['met', 'accepted', 'attested', 'clinician_provided'])
 
-export default function PriorAuth({ patient, setWhy, reload }) {
+export default function PriorAuth({ patient, setWhy, reload, session }) {
   const [sug, setSug] = useState(null)
   const [list, setList] = useState([])
   const { busy, error, run } = useAction()
   const refresh = () => run(async () => { setList(await api(`/patients/${patient}/prior-auth`)); setSug(await api(`/patients/${patient}/prior-auth/suggestions`)); reload() })
   useEffect(() => { refresh() }, [])
   const draft = (code) => run(async () => { await api(`/patients/${patient}/prior-auth`, { method: 'POST', body: { service_code: code } }); await refresh() })
-  const open = new Set(list.filter((p) => !['CERTIFIED', 'DENIED', 'NOT_REQUIRED'].includes(p.status)).map((p) => p.service_code))
+  const current = list.filter((p) => !session.encounter || p.encounter_id === session.encounter)
+  const existing = (code) => current.find((p) => p.service_code === code && !['DENIED', 'NOT_REQUIRED'].includes(p.status))
   return (
     <section>
       <ErrorNote error={error} />
@@ -22,8 +23,8 @@ export default function PriorAuth({ patient, setWhy, reload }) {
         <ul className="plain">{sug.map((s) => (
           <li key={s.service_code} className="card row">
             <div><b>{s.service_name}</b> <span className="muted">({s.service_code})</span><small className="block">{s.pa_required ? `${s.plan} requires prior authorization.` : `${s.plan || 'This plan'} does not require it.`} Mentioned in: {s.reason}</small></div>
-            {s.pa_required && !open.has(s.service_code) && <button className="primary" disabled={busy} onClick={() => draft(s.service_code)}>{busy ? 'Drafting…' : 'Prepare draft'}</button>}
-            {open.has(s.service_code) && <span className="tag">in progress</span>}
+            {s.pa_required && !existing(s.service_code) && <button className="primary" disabled={busy} onClick={() => draft(s.service_code)}>{busy ? 'Drafting…' : 'Prepare draft'}</button>}
+            {existing(s.service_code) && <a href={`#request-${existing(s.service_code).id}`}>{existing(s.service_code).status === 'CERTIFIED' ? 'Certified — view authorization' : 'In progress — view request'}</a>}
           </li>))}</ul>}
       <h2>Requests</h2>
       {list.length === 0 && <p className="muted">None yet. Drafts are also prepared automatically when discharge is advised.</p>}
@@ -37,7 +38,7 @@ function Request({ pa, onChange, setWhy }) {
   const act = (path, body) => run(async () => { await api(path, { method: 'POST', body }); await onChange() })
   const review = (rid, body) => act(`/prior-auth/${pa.id}/requirements/${rid}`, body)
   return (
-    <article className="card pa">
+    <article className="card pa" id={`request-${pa.id}`}>
       <div className="row"><h3>{pa.service_name} <span className="muted">· {pa.id}</span></h3><span className={`status s-${pa.status}`}>{pa.status.replace('_', ' ')}</span></div>
       <ErrorNote error={error} />
       <ul className="reqs">

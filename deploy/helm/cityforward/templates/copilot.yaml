@@ -54,6 +54,9 @@ spec:
           env:
             - {name: COPILOT_DB_URL, valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.secretName }}, key: copilot-url}}}
             - {name: MEDITRACK_BASE_URL, value: "http://meditrack:8001"}
+            - {name: MEDITRACK_SMART_ISSUER, value: {{ include "cf.publicBase" . | quote }}}
+            - {name: MEDITRACK_SMART_AUDIENCE, value: {{ printf "%s/fhir" (include "cf.publicBase" .) | quote }}}
+            - {name: SMART_SESSION_REQUIRED, value: {{ eq .Values.meditrack.auth.mode "local" | quote }}}
             - {name: PAYER_BASE_URL, value: "http://payer:8003"}
             - {name: PAYER_API_KEY, valueFrom: {secretKeyRef: {name: {{ .Values.payer.apiKeySecret }}, key: api-key}}}
             - {name: AI_BACKEND_KEY_FILE, value: /keys/ai-backend.pem}

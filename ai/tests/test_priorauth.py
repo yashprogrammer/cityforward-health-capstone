@@ -41,6 +41,20 @@ def test_suggestions_come_from_the_chart_and_the_plan(env, client, meditrack):
     assert r.json() == []        # a heart-attack stay with no post-acute service: nothing to authorize
 
 
+def test_existing_certified_authorization_blocks_another_draft_for_the_stay(env, client, meditrack):
+    from copilot import db
+    pid = pid_of(env, WHITAKER)
+    headers = tok(meditrack, WHITAKER, "pa.hughes")
+    body = {"service_code": "E1390"}
+    first = client.post(f"/api/patients/{pid}/prior-auth", headers=headers, json=body)
+    assert first.status_code == 201
+    with db.system() as c:
+        c.execute("UPDATE prior_auth SET status='CERTIFIED' WHERE id=%s", (first.json()["id"],))
+    duplicate = client.post(f"/api/patients/{pid}/prior-auth", headers=headers, json=body)
+    assert duplicate.status_code == 409
+    assert "certified" in duplicate.json()["detail"]
+
+
 def test_home_oxygen_end_to_end_with_human_in_the_loop(env, client, meditrack, payer):
     pid = pid_of(env, WHITAKER)
     runtime.gateway = Gateway(RuleBasedLLM(O2_MAP))

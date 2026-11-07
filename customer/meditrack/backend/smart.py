@@ -79,11 +79,31 @@ def issue_token(claims: dict, ttl: int, audience: str = FHIR_BASE) -> str:
 
 
 def verify_access_token(token: str) -> dict:
-    return jwt.decode(token, signing_key().public_key(), algorithms=["RS256"], audience=FHIR_BASE, issuer=BASE_URL)
+    claims = jwt.decode(token, signing_key().public_key(), algorithms=["RS256"], audience=FHIR_BASE, issuer=BASE_URL)
+    if os.getenv("AUTH_MODE", "oidc") in {"local", "oidc"} and claims.get("token_use") != "service":
+        from .staff_sessions import session_status
+        from .staff_policy import may_access_patient
+        staff = session_status(claims.get("staff_session", ""))
+        if (claims.get("token_use") != "access" or not staff or staff["USR_ID"] != claims.get("sub")
+                or staff["ROLE_CD"] != claims.get("role") or staff["UNIT_CD"] != claims.get("unit")):
+            raise jwt.InvalidTokenError("staff session expired, revoked or changed")
+        with connect() as c:
+            adm = row(c, 'SELECT PT_ID, WRD_CD FROM IP_ADM_DTL WHERE IP_NO=%s', claims.get('encounter'))
+        if (not adm or str(adm['PT_ID']) != str(claims.get('patient')) or not may_access_patient(
+                staff['ROLE_CD'], [staff['UNIT_CD']] if staff.get('UNIT_CD') else [], adm['WRD_CD'], 'patient.view')):
+            raise jwt.InvalidTokenError('patient access is no longer valid')
+    return claims
 
 
 def scope_allows(claims: dict, rtype: str, action: str = "read", patient_id=None) -> bool:
     """SMART v1 scope check: <patient|user|system>/<Resource|*>.<read|write|*>. patient/* scopes are limited to the token's patient."""
+    # A clinician's session is authorized for its launch patient, even if a
+    # registered client is also permitted a broad user/ scope.  In particular,
+    # unrestricted searches must not turn that scope into cross-patient access.
+    if (os.getenv('AUTH_MODE', 'oidc') in {'local', 'oidc'} and claims.get('token_use') == 'access'
+            and rtype not in ('Practitioner', 'Organization')):
+        if patient_id is None or str(claims.get('patient')) != str(patient_id):
+            return False
     for sc in claims.get("scope", "").split():
         m = SCOPE_RE.fullmatch(sc)
         if not m:
@@ -122,6 +142,14 @@ def jwks():
 
 # ---------------------------------------------------------------- EHR launch
 def current_user(request: Request) -> dict:
+    if os.getenv("AUTH_MODE", "oidc") in {"local", "oidc"}:
+        from .staff_sessions import get_session
+        staff = get_session(request.cookies.get("mt_session", ""))
+        if not staff:
+            raise HTTPException(401, "staff session missing or expired")
+        return staff
+    from .auth_config import validate_auth_config
+    validate_auth_config()  # never mint a staff token through the demo path in a secured environment
     uid = request.cookies.get("mt_user", DEFAULT_USER)
     with connect() as c:
         u = row(c, "SELECT * FROM USR_MST WHERE USR_ID=%s AND IS_ACTV=1", uid) or row(c, "SELECT * FROM USR_MST WHERE USR_ID=%s", DEFAULT_USER)
@@ -133,12 +161,23 @@ def ehr_launch(request: Request, lnk_id: int, ip_no: str):
     """Opened by MediTrack's patient file for a SMART link: creates the launch context and sends the browser to the app."""
     user = current_user(request)
     with connect() as c:
-        lnk = row(c, "SELECT * FROM SYS_EXT_LNK WHERE LNK_ID=%s AND IS_ACTV=1 AND DISP_MD='SMART'", lnk_id)
-        adm = row(c, "SELECT IP_NO, PT_ID FROM IP_ADM_DTL WHERE IP_NO=%s", ip_no)
+        if lnk_id == -1 and os.getenv('AUTH_MODE') == 'oidc' and os.getenv('INTEGRATED_SMART_LAUNCH') == '1':
+            lnk = {'LNK_LBL': 'AI Clinical Insights', 'LNK_URL': BASE_URL + '/ai/launch'}
+        else:
+            lnk = row(c, "SELECT * FROM SYS_EXT_LNK WHERE LNK_ID=%s AND IS_ACTV=1 AND DISP_MD='SMART'", lnk_id)
+        adm = row(c, "SELECT IP_NO, PT_ID, WRD_CD FROM IP_ADM_DTL WHERE IP_NO=%s", ip_no)
         if not lnk or not adm:
             raise HTTPException(404, "UNKNOWN LINK OR ACCOUNT")
         launch = secrets.token_urlsafe(18)
-        c.execute("INSERT INTO SMT_LAUNCH VALUES (%s,%s,%s,%s,%s)", (launch, user["USR_ID"], ip_no, adm["PT_ID"], str(time.time())))
+        if os.getenv("AUTH_MODE", "oidc") in {"local", "oidc"}:
+            from .staff_policy import may_access_patient
+            from .staff_sessions import session_reference
+            if not may_access_patient(user['ROLE_CD'], [user['UNIT_CD']] if user.get('UNIT_CD') else [], adm['WRD_CD'], 'patient.view'):
+                raise HTTPException(403, 'patient outside your assignment')
+            c.execute("INSERT INTO SMT_LAUNCH (LAUNCH_ID, USR_ID, IP_NO, PT_ID, CRT_TS, session_hash) VALUES (%s,%s,%s,%s,%s,%s)",
+                      (launch, user["USR_ID"], ip_no, adm["PT_ID"], str(time.time()), session_reference(request.cookies['mt_session'])))
+        else:
+            c.execute("INSERT INTO SMT_LAUNCH (LAUNCH_ID, USR_ID, IP_NO, PT_ID, CRT_TS) VALUES (%s,%s,%s,%s,%s)", (launch, user["USR_ID"], ip_no, adm["PT_ID"], str(time.time())))
         audit(c, user["USR_ID"], "SMART_LAUNCH", f"{lnk['LNK_LBL']}:{ip_no}")
     sep = "&" if "?" in lnk["LNK_URL"] else "?"
     return RedirectResponse(f"{lnk['LNK_URL']}{sep}{urlencode({'iss': FHIR_BASE, 'launch': launch})}", status_code=302)
@@ -194,6 +233,18 @@ def authorize(request: Request, response_type: str = "", client_id: str = "", re
             return _redirect_error(redirect_uri, state, "invalid_request", "missing, unknown or expired launch context")
         if not ctx:
             return _redirect_error(redirect_uri, state, "invalid_request", "only EHR launch is supported by this server")
+        if os.getenv("AUTH_MODE", "oidc") in {"local", "oidc"}:
+            from .staff_sessions import session_reference
+            from .staff_policy import may_access_patient
+            try:
+                staff = current_user(request)
+            except HTTPException:
+                return _redirect_error(redirect_uri, state, 'access_denied', 'staff session is no longer valid')
+            adm = row(c, 'SELECT WRD_CD FROM IP_ADM_DTL WHERE IP_NO=%s', ctx['IP_NO'])
+            reference = session_reference(request.cookies['mt_session'])
+            if (not ctx.get('SESSION_HASH') or not secrets.compare_digest(ctx['SESSION_HASH'], reference)
+                    or ctx['USR_ID'] != staff['USR_ID'] or not adm or not may_access_patient(staff['ROLE_CD'], [staff['UNIT_CD']] if staff.get('UNIT_CD') else [], adm['WRD_CD'], 'patient.view')):
+                return _redirect_error(redirect_uri, state, 'access_denied', 'launch session or patient access is no longer valid')
         code = secrets.token_urlsafe(32)
         c.execute("INSERT INTO SMT_CODE VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0)",
                   (code, client_id, redirect_uri, scope, ctx["USR_ID"], launch, code_challenge, time.time() + CODE_TTL))
@@ -209,21 +260,21 @@ def _err(status: int, error: str, desc: str) -> JSONResponse:
 
 
 @router.post("/smart/token")
-def token(grant_type: str = Form(""), code: str = Form(""), redirect_uri: str = Form(""), code_verifier: str = Form(""), client_id: str = Form(""),
+def token(request: Request, grant_type: str = Form(""), code: str = Form(""), redirect_uri: str = Form(""), code_verifier: str = Form(""), client_id: str = Form(""),
           client_assertion_type: str = Form(""), client_assertion: str = Form(""), scope: str = Form("")):
     if grant_type == "authorization_code":
-        return _code_grant(code, redirect_uri, code_verifier, client_id)
+        return _code_grant(code, redirect_uri, code_verifier, client_id, request)
     if grant_type == "client_credentials":
         return _backend_grant(client_assertion_type, client_assertion, scope)
     return _err(400, "unsupported_grant_type", "authorization_code or client_credentials")
 
 
-def _code_grant(code: str, redirect_uri: str, verifier: str, client_id: str):
+def _code_grant(code: str, redirect_uri: str, verifier: str, client_id: str, request: Request):
     with connect() as c:
-        rec = row(c, "SELECT * FROM SMT_CODE WHERE CODE=%s", code)
-        if not rec or rec["USED"] or rec["EXP_TS"] < time.time():
+        # Claim the code atomically so concurrent exchanges cannot both win.
+        rec = row(c, "UPDATE SMT_CODE SET USED=1 WHERE CODE=%s AND USED=0 AND EXP_TS >= %s RETURNING *", code, time.time())
+        if not rec:
             return _err(400, "invalid_grant", "unknown, used or expired authorization code")
-        c.execute("UPDATE SMT_CODE SET USED=1 WHERE CODE=%s", (code,))   # single use, even if the checks below fail
         if rec["CLIENT_ID"] != client_id or rec["REDIRECT_URI"] != redirect_uri:
             return _err(400, "invalid_grant", "client_id or redirect_uri does not match the authorization request")
         digest = urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
@@ -231,10 +282,22 @@ def _code_grant(code: str, redirect_uri: str, verifier: str, client_id: str):
             return _err(400, "invalid_grant", "PKCE verification failed")
         launch = row(c, "SELECT * FROM SMT_LAUNCH WHERE LAUNCH_ID=%s", rec["LAUNCH_ID"])
         user = row(c, "SELECT * FROM USR_MST WHERE USR_ID=%s", rec["USR_ID"])
+        if os.getenv("AUTH_MODE", "oidc") in {"local", "oidc"}:
+            from .staff_sessions import session_reference
+            from .staff_policy import may_access_patient
+            try:
+                staff = current_user(request)
+            except HTTPException:
+                return _err(400, 'invalid_grant', 'staff session is no longer valid')
+            adm = row(c, 'SELECT WRD_CD FROM IP_ADM_DTL WHERE IP_NO=%s', launch['IP_NO']) if launch else None
+            if (not launch or not launch.get('SESSION_HASH') or not secrets.compare_digest(launch['SESSION_HASH'], session_reference(request.cookies['mt_session']))
+                    or not user or staff['USR_ID'] != user['USR_ID'] or not adm or not may_access_patient(staff['ROLE_CD'], [staff['UNIT_CD']] if staff.get('UNIT_CD') else [], adm['WRD_CD'], 'patient.view')):
+                return _err(400, 'invalid_grant', 'staff session or patient access is no longer valid')
         doc = row(c, "SELECT DR_NM FROM DR_MST WHERE DR_ID=%s", user["DR_ID"]) if user["DR_ID"] else None
         audit(c, user["USR_ID"], "SMART_TOKEN", f"{client_id}:{launch['IP_NO']}")
     claims = {"sub": user["USR_ID"], "client_id": client_id, "scope": rec["SCOPE"], "patient": str(launch["PT_ID"]), "encounter": launch["IP_NO"],
               "name": user["USR_NM"], "role": user["ROLE_CD"], "unit": user["UNIT_CD"],
+              **({"staff_session": launch['SESSION_HASH'], "token_use": "access"} if os.getenv("AUTH_MODE", "oidc") in {"local", "oidc"} else {}),
               **({"fhirUser": f"{FHIR_BASE}/Practitioner/{user['DR_ID']}"} if user["DR_ID"] else {})}
     body = {"access_token": issue_token(claims, ACCESS_TTL), "token_type": "Bearer", "expires_in": ACCESS_TTL, "scope": rec["SCOPE"],
             "patient": claims["patient"], "encounter": claims["encounter"], "need_patient_banner": True}
@@ -278,8 +341,30 @@ def _backend_grant(assertion_type: str, assertion: str, scope: str):
         return _err(400, "invalid_scope", f"scope not allowed for this client: {bad or '(empty)'}")
     with connect() as c:
         audit(c, cid, "SMART_BACKEND_TOKEN", scope)
-    return JSONResponse({"access_token": issue_token({"sub": cid, "client_id": cid, "scope": scope}, BACKEND_TTL), "token_type": "Bearer",
+    return JSONResponse({"access_token": issue_token({"sub": cid, "client_id": cid, "scope": scope, "token_use": "service"}, BACKEND_TTL), "token_type": "Bearer",
                          "expires_in": BACKEND_TTL, "scope": scope}, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+
+
+@router.get('/smart/session-status/{reference}')
+def session_status_endpoint(reference: str, request: Request):
+    """Service-authenticated session check; never returns patient data or extends idle time."""
+    if os.getenv('AUTH_MODE', 'oidc') not in {'local', 'oidc'}:
+        raise HTTPException(404)
+    authorization = request.headers.get('authorization', '')
+    if not authorization.lower().startswith('bearer '):
+        raise HTTPException(401, 'service token required')
+    try:
+        claims = verify_access_token(authorization[7:])
+    except jwt.PyJWTError as exc:
+        raise HTTPException(401, 'invalid service token') from exc
+    expected_client = os.getenv('SMART_INTROSPECTION_CLIENT_ID', 'cityforward-ai-backend')
+    if (claims.get('token_use') != 'service' or claims.get('client_id') != expected_client
+            or not scope_allows(claims, 'Patient', 'read')):
+        raise HTTPException(403, 'authorized backend service required')
+    from .staff_sessions import session_status
+    staff = session_status(reference)
+    return JSONResponse({'active': bool(staff), **({'user': staff['USR_ID'], 'role': staff['ROLE_CD'], 'unit': staff['UNIT_CD']} if staff else {})},
+                        headers={'Cache-Control': 'no-store'})
 
 
 # ---------------------------------------------------------------- admin: client registration (the IT admin's job)
@@ -315,12 +400,16 @@ def register_client(body: ClientIn):
 @router.post("/int/admin/smart/clients/{client_id}/toggle")
 def toggle_client(client_id: str):
     with connect() as c:
-        c.execute("UPDATE SMT_CLIENT SET IS_ACTV = 1 - IS_ACTV WHERE CLIENT_ID=%s", (client_id,))
+        changed = c.execute("UPDATE SMT_CLIENT SET IS_ACTV = 1 - IS_ACTV WHERE CLIENT_ID=%s", (client_id,))
+        if changed.rowcount:
+            audit(c, 'it.admin', 'SMART_CLIENT_TOGGLED', client_id)
     return {"ok": True}
 
 
 @router.get("/int/users")
 def list_users():
     """The staff list for the banner's 'act as' switch (demo only: MediTrack has no SSO)."""
+    from .auth_config import validate_auth_config
+    validate_auth_config()
     with connect() as c:
         return rows(c, "SELECT USR_ID, USR_NM, ROLE_CD, UNIT_CD FROM USR_MST WHERE IS_ACTV=1 ORDER BY USR_ID")
