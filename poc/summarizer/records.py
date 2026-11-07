@@ -97,7 +97,7 @@ class PatientRecord(BaseModel):
     def as_of(self) -> str:
         """The date of the most recent thing in the chart ("now" for this patient)."""
         dates = [e.start for e in self.encounters] + [n.date for n in self.notes] + [o.date for o in self.observations]
-        return max(dates)[:10]
+        return max(dates)[:10] if dates else date.today().isoformat()
 
     @property
     def age(self) -> int:
@@ -188,7 +188,7 @@ def load_bundle(source: str | Path | dict) -> PatientRecord:
         category = "vital-signs" if "vital-signs" in cats else "laboratory" if "laboratory" in cats else None
         if category is None or not o.get("effectiveDateTime"):
             continue
-        parts = [(c["code"]["coding"][0], c.get("valueQuantity")) for c in o["component"]] if o.get("component") else [(o["code"]["coding"][0], o.get("valueQuantity"))]
+        parts = [((c.get("code", {}).get("coding") or [{}])[0], c.get("valueQuantity")) for c in o["component"]] if o.get("component") else [((o.get("code", {}).get("coding") or [{}])[0], o.get("valueQuantity"))]
         flag = next((cd["code"] for i in o.get("interpretation", []) for cd in i.get("coding", []) if cd["code"] in ("H", "L")), "")
         for n, (coding, q) in enumerate(parts):
             name = (coding.get("display") if o.get("component") else _display(o["code"])) or ""

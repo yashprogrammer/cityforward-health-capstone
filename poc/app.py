@@ -11,28 +11,56 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
 from summarizer.graph import summarize                    # noqa: E402
+from summarizer.fhir import FhirClient, FhirError          # noqa: E402
 from summarizer.llm import LLMError, get_llm              # noqa: E402
 from summarizer.records import list_bundles, load_bundle  # noqa: E402
 
 BUNDLES = Path(os.getenv("BUNDLES_DIR", Path(__file__).parent.parent / "customer" / "synthea" / "prepared" / "bundles"))
 
+
+def patient_label(patient):
+    name = (patient.get('name') or [{}])[0]
+    full_name = name.get('text') or ' '.join([*name.get('given', []), name.get('family', '')]).strip()
+    return f"{full_name or 'Patient'} · {patient['id']}"
+
+
 st.set_page_config(page_title="Patient history summarizer (POC)", page_icon=":stethoscope:", layout="wide")
 st.title("Patient history summarizer")
 st.caption("Proof of concept on synthetic patients. Not a medical device; a clinician reviews everything.")
 
-options = list_bundles(BUNDLES)
-if not options:
-    st.error(f"No patient bundles found in {BUNDLES}")
-    st.stop()
-label = st.sidebar.selectbox("Patient", [o[0] for o in options])
+ehr_url = os.getenv('POC_EHR_URL', '').rstrip('/')
+if ehr_url:
+    st.sidebar.caption('Source: live MediTrack FHIR API')
+    try:
+        client = FhirClient(ehr_url, os.environ['POC_EHR_PUBLIC_URL'],
+                            os.getenv('POC_FHIR_CLIENT_ID', 'poc-reader'), os.environ['POC_FHIR_KEY_FILE'])
+        patients = client.patients()
+        options = {patient_label(p): p['id'] for p in patients}
+        if not options:
+            st.warning('No patients are available from the EHR.')
+            st.stop()
+        label = st.sidebar.selectbox('Patient', list(options))
+        rec = load_bundle(client.chart(options[label]))
+    except (FhirError, KeyError, ValueError) as e:
+        st.error(f'Could not load the EHR chart: {e}')
+        st.stop()
+    finally:
+        if 'client' in locals():
+            client.http.close()
+else:
+    st.sidebar.caption('Source: local synthetic FHIR files')
+    options = list_bundles(BUNDLES)
+    if not options:
+        st.error(f"No patient bundles found in {BUNDLES}")
+        st.stop()
+    label = st.sidebar.selectbox("Patient", [o[0] for o in options])
+    rec = load_bundle(dict(options)[label])
 provider = st.sidebar.selectbox("Model", ["auto", "groq", "foundry", "offline"], help="auto = Groq if GROQ_API_KEY is set, else offline template")
-path = dict(options)[label]
-rec = load_bundle(path)
 
 left, right = st.columns([3, 2])
 with right:
     st.subheader("Chart at a glance")
-    st.write(f"**{rec.name}**, {rec.age} {rec.sex}, {rec.payer or 'self-pay'}")
+    st.write(f"**{rec.name}**, {rec.age} {rec.sex}, {rec.payer or 'coverage not available'}")
     st.write(f"{len(rec.encounters)} encounters · {len(rec.observations)} observations · {len(rec.notes)} notes · {len(rec.medications)} medication orders")
 
 if st.sidebar.button("Summarize", type="primary"):

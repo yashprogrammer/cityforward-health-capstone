@@ -1,0 +1,8 @@
+{$DEMO_DOMAIN} {
+    handle /poc* {
+        reverse_proxy poc:8501
+    }
+    handle {
+        reverse_proxy meditrack:8001
+    }
+}
