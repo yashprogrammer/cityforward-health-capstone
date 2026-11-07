@@ -55,7 +55,7 @@ else:
         st.stop()
     label = st.sidebar.selectbox("Patient", [o[0] for o in options])
     rec = load_bundle(dict(options)[label])
-provider = st.sidebar.selectbox("Model", ["auto", "groq", "foundry", "offline"], help="auto = Groq if GROQ_API_KEY is set, else offline template")
+st.sidebar.markdown("**Model:** Azure AI Foundry")
 
 left, right = st.columns([3, 2])
 with right:
@@ -65,7 +65,7 @@ with right:
 
 if st.sidebar.button("Summarize", type="primary"):
     try:
-        llm = get_llm(None if provider == "auto" else provider)
+        llm = get_llm("foundry")
     except LLMError as e:
         st.sidebar.error(str(e))
         st.stop()

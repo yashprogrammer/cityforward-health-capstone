@@ -141,10 +141,15 @@ def test_openai_compatible_client_against_a_fake_endpoint(hale):
     assert res.mode == "llm" and res.model == "fake:m"
 
 
-def test_streamlit_app_renders_offline(monkeypatch):
+def test_streamlit_app_uses_foundry_and_renders_fallback(monkeypatch):
     from streamlit.testing.v1 import AppTest
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    import summarizer.llm
+    selected = []
+    monkeypatch.setattr(summarizer.llm, "get_llm", lambda provider: selected.append(provider) or None)
     at = AppTest.from_file(str(__import__("pathlib").Path(__file__).resolve().parent.parent / "app.py"), default_timeout=30).run()
     assert not at.exception
+    assert len(at.sidebar.selectbox) == 1  # Only the patient picker remains.
+    assert any("Azure AI Foundry" in m.value for m in at.sidebar.markdown)
     at.sidebar.button[0].click().run()
+    assert selected == ["foundry"]
     assert not at.exception and any("Template summary" in w.value for w in at.warning)

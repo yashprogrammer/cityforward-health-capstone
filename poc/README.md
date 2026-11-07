@@ -6,12 +6,13 @@ One afternoon of work, on synthetic patients, to answer the CMIO's first questio
 
 ```bash
 pip install -r poc/requirements.txt
-export GROQ_API_KEY=...                  # optional; without it the app shows the labelled template summary
+# Configure LLM_BASE_URL, LLM_MODEL and Foundry authentication first.
 streamlit run poc/app.py
 PYTHONPATH=poc pytest poc/tests          # no network or key needed (the model is faked)
 ```
 
-Model: `LLM_PROVIDER=groq` (default `openai/gpt-oss-20b`), `foundry` (any OpenAI-compatible endpoint), or `offline`.
+The POC screen uses Azure AI Foundry. If the model response fails its checks or
+the model is unavailable, it shows a labelled template summary instead.
 
 ## Optional: connect the POC to the legacy EHR
 
