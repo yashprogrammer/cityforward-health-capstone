@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from './api.js'
-import { ErrorNote, useAction } from './parts.jsx'
+import { ErrorNote, InlineForm, useAction } from './parts.jsx'
 
 const LABEL = { met: 'Documented', candidate: 'Found: please confirm', missing: 'Not documented', fails_policy: 'Does not meet policy', stale: 'Too old', needs_attestation: 'Needs clinician attestation',
                 accepted: 'Confirmed', attested: 'Attested', clinician_provided: 'Provided by clinician' }
@@ -35,7 +35,9 @@ export default function PriorAuth({ patient, setWhy, reload, session }) {
 
 function Request({ pa, onChange, setWhy }) {
   const { busy, error, run } = useAction()
-  const act = (path, body) => run(async () => { await api(path, { method: 'POST', body }); await onChange() })
+  const act = (path, body) => run(async () => { await api(path, { method: 'POST', body }); await onChange(); return true })
+  const [asking, setAsking] = useState(null)   // { kind: 'confirm' | 'provide' | 'approve', req?: requirement }
+  const done = async (ok) => { if (await ok) setAsking(null) }
   const review = (rid, body) => act(`/prior-auth/${pa.id}/requirements/${rid}`, body)
   return (
     <article className="card pa" id={`request-${pa.id}`}>
@@ -48,21 +50,27 @@ function Request({ pa, onChange, setWhy }) {
             {r.statement && <p className="statement">{r.statement}</p>}
             {r.note && <p className="muted small">{r.note}</p>}
             {r.evidence.length > 0 && <button className="link" onClick={() => setWhy({ title: r.text, sources: r.evidence.map((e) => ({ ref: e.ref, label: e.date || e.ref, text: e.text })) })}>Show evidence</button>}
-            {pa.status === 'DRAFT' || pa.status === 'PENDED' ? (
+            {pa.status === 'DRAFT' || pa.status === 'PENDED' ? (asking?.req === r.id ? (
+              <InlineForm busy={busy} error={error} onCancel={() => setAsking(null)}
+                submit={asking.kind === 'confirm' ? 'Confirm' : 'Save'}
+                fields={asking.kind === 'confirm' ? [{ name: 'statement', label: 'What does the evidence show? (this goes to the payer)', min: 20 }]
+                  : [{ name: 'statement', label: 'Statement for the payer', min: 20 }, ...(r.kind === 'value' ? [{ name: 'value', label: 'Measured value' }, { name: 'measured_on', label: 'Date measured (YYYY-MM-DD)', min: 10 }] : [])]}
+                onSubmit={(v) => done(review(r.id, asking.kind === 'confirm' ? { action: 'accept', statement: v.statement } : { action: 'provide', statement: v.statement, value: r.kind === 'value' ? parseFloat(v.value) : undefined, measured_on: r.kind === 'value' ? v.measured_on : undefined }))} />
+            ) : (
               <div className="actions">
-                {r.status === 'candidate' && <button disabled={busy} onClick={() => review(r.id, { action: 'accept', statement: r.statement || prompt('What does the evidence show? (this goes to the payer)') || '' })}>Confirm</button>}
+                {r.status === 'candidate' && <button disabled={busy} onClick={() => r.statement ? review(r.id, { action: 'accept', statement: r.statement }) : setAsking({ kind: 'confirm', req: r.id })}>Confirm</button>}
                 {r.status === 'needs_attestation' && <button disabled={busy} onClick={() => review(r.id, { action: 'attest' })}>I attest</button>}
-                {!GOOD.has(r.status) && r.kind !== 'attestation' && r.kind !== 'diagnosis' && <button disabled={busy} onClick={() => {
-                  const st = prompt('Statement for the payer (at least 20 characters)'); if (!st) return
-                  const v = r.kind === 'value' ? parseFloat(prompt('Measured value')) : undefined
-                  review(r.id, { action: 'provide', statement: st, value: v, measured_on: r.kind === 'value' ? prompt('Date measured (YYYY-MM-DD)') : undefined })
-                }}>Provide…</button>}
-              </div>) : null}
+                {!GOOD.has(r.status) && r.kind !== 'attestation' && r.kind !== 'diagnosis' && <button disabled={busy} onClick={() => setAsking({ kind: 'provide', req: r.id })}>Provide…</button>}
+              </div>)) : null}
           </li>))}
       </ul>
       {pa.payer_notes?.length > 0 && <div className="payer"><b>Payer response ({pa.payer_action}):</b> {pa.payer_notes.join(' · ')} {pa.preauth_ref && <b>Reference {pa.preauth_ref}</b>}</div>}
       <div className="actions end">
-        {(pa.status === 'DRAFT') && <button className="primary" disabled={busy} onClick={() => { const gaps = pa.gaps.length; act(`/prior-auth/${pa.id}/approve`, gaps ? { submit_with_gaps_reason: prompt(`${gaps} requirement(s) open. Reason to submit anyway?`) || '' } : {}) }}>Approve for submission</button>}
+        {pa.status === 'DRAFT' && (asking?.kind === 'approve' ? (
+          <InlineForm busy={busy} error={error} submit="Approve anyway" onCancel={() => setAsking(null)}
+            fields={[{ name: 'reason', label: `${pa.gaps.length} requirement(s) open. Reason to submit anyway?`, min: 5 }]}
+            onSubmit={(v) => done(act(`/prior-auth/${pa.id}/approve`, { submit_with_gaps_reason: v.reason }))} />
+        ) : <button className="primary" disabled={busy} onClick={() => pa.gaps.length ? setAsking({ kind: 'approve' }) : act(`/prior-auth/${pa.id}/approve`, {})}>Approve for submission</button>)}
         {pa.status === 'APPROVED' && <button className="primary" disabled={busy} onClick={() => act(`/prior-auth/${pa.id}/submit`)}>Submit to payer</button>}
         {pa.status === 'QUEUED' && <button disabled={busy} onClick={() => act(`/prior-auth/${pa.id}/refresh`)}>Check payer decision</button>}
       </div>

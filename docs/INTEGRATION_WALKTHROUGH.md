@@ -170,6 +170,92 @@ checked on 2026-11-07, from outside the VM:
   the privacy-officer review of the break-glass entry, and sign-in by an Entra
   account that is not mapped to a staff member.
 
+### 4. Real AI in the AI Clinical Insights tab (fix and re-test, 2026-11-07)
+
+**Symptom.** "Hospital stay summary" showed "Template summary (no AI used): model
+unavailable or invalid output: no JSON object in the model reply", and the
+discharge packet showed "template (model unavailable or invalid output)". The
+chart text itself was fine; the AI had not answered.
+
+**Cause.** `gpt-oss-120b` is a reasoning model: it thinks first, and those hidden
+reasoning tokens count against the output cap. The Azure compose file set
+`LLM_MAX_OUTPUT_TOKENS: '2000'`. On larger charts (about 3,000 to 3,700 input
+tokens) the model used all 2,000 tokens thinking and returned an empty answer.
+The `llm_call` audit table showed it: the failed rows had `status=invalid` and
+`tokens_out=2000` exactly; the same patient's smaller calls succeeded. A direct
+probe of the model with a small synthetic prompt answered normally, so the
+endpoint, the managed identity and the prompt path were healthy.
+
+**Fix** (three small changes):
+
+- `deploy/course/azure-integrated.yml`: `LLM_MAX_OUTPUT_TOKENS` 2000 to 8000 (you
+  pay only for tokens used) and new `LLM_REASONING_EFFORT: medium`.
+- `ai/copilot/llm.py`: optional `LLM_REASONING_EFFORT` (low, medium, high), and an
+  empty reply with `finish_reason=length` now raises "the model used all N output
+  tokens on reasoning and wrote no answer: raise LLM_MAX_OUTPUT_TOKENS or lower
+  LLM_REASONING_EFFORT" instead of the misleading "no JSON object".
+- `ai/tests/test_foundry_identity.py`: a test for that error (run with
+  `PYTHONPATH=ai python -m pytest --noconftest ai/tests/test_foundry_identity.py`,
+  which never touches a database).
+
+Redeploy only the AI service (legacy, POC, EHR and database untouched):
+
+```bash
+cd ~/cityforward-integrated && C='sudo docker compose -p cityforward-integrated --env-file runtime.conf -f deploy/course/azure-integrated.yml'
+$C build ai-integrated && $C up -d --no-deps ai-integrated
+```
+
+Teaching point: when a model-backed feature "falls back", read the audit row (status
+and `tokens_out`) before changing prompts. A token count equal to the cap means
+truncation, not a bad prompt. Template results are not cached, so Regenerate or
+Refresh calls the model again.
+
+**Re-test on Azure as the ATTENDING (patient IP2610-0209, 4W-CARD), all with the
+live model:**
+
+| Feature | Result |
+| --- | --- |
+| Overview: Hospital stay summary (Regenerate) | "AI summary by foundry:gpt-oss-120b. Every citation and number was checked against the chart." Findings carry source chips. |
+| Overview: Needs attention (rule-based) | Loads; no documentation gaps found. |
+| Overview: Discharge packet (Refresh) | Stay summary "ready, cached llm". One earlier Refresh fell back with "the model's summary failed grounding checks twice": the grounding gate rejected two model drafts and fell back to the template, which is by design (the model is nondeterministic). A second Refresh passed. |
+| Timeline | Events load; clicking an event shows its source resource in the side panel; type filter chips toggle. |
+| Ask the chart | Medications question: grounded list with cited passages (C1, C3, ...). Unanswerable-by-design question (penicillin allergy): answered "No Known Allergies" and cited the note. |
+| Prior authorization | Nothing suggested for this patient (correct: no qualifying service in the notes). The model-written draft path was verified on Doyle earlier (`prior-auth` call `ok`). |
+| Coding | "Generate new version" produced worksheet CW-7A24F390D7 with documentation queries. Not finalized. |
+
+After the fix the audit table shows 6 model calls (summary x3, ask x2, coding x1),
+all `ok`, with no 4xx or 5xx from the AI service. One summary
+used 2,391 output tokens, which the old cap would have truncated.
+
+Not re-tested here: a grounding failure on the packet can still happen on any
+single draft (see above); finalize, approve and submit paths are as listed in the
+"Not yet verified" list.
+
+### 5. Reject and Change buttons did nothing (fix, 2026-11-07)
+
+**Symptom.** On the coding worksheet, Accept worked but Reject and Change did
+nothing visible.
+
+**Cause.** Both buttons asked for the reason through the browser's `prompt()`
+pop-up. A browser or embedded frame that suppresses dialogs makes `prompt()`
+return nothing at once, and the code then silently skips the request. The same
+pattern was in three prior-authorization actions.
+
+**Fix.** `ai/dashboard/src/parts.jsx` has a small `InlineForm` that asks on the
+page (fields, a disabled submit until the minimum length is met, Cancel, and the
+server's error shown inside the form). Coding Reject and Change, and prior
+authorization Confirm, Provide and "Approve anyway" now use it. No `prompt()` is
+left in the dashboard. The form closes only when the server accepts the request.
+Deploy as in section 4 (the dashboard is built inside the AI image).
+
+**Checked on Azure as the ATTENDING (IP2610-0204):** Reject needs a reason of at
+least 5 characters, then the line shows "rejected", the reason and the reviewer.
+Change with the invalid code `ZZZ` stays open and shows "'ZZZ' is not a billable
+ICD-10-CM code" inside the form; with `I50.22` the line shows "modified, was I50.9".
+The decisions were saved on synthetic demo data with test reasons ("Test invalid
+code", "Test of inline reject form"). The prior-authorization forms compile and use
+the same component but were not clicked through in a browser.
+
 Do not run the destructive legacy seed against the existing Azure database.
 
 ### Local test database incident

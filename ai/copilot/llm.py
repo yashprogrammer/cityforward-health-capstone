@@ -77,6 +77,10 @@ class OpenAICompatible:
         if limit < 0:
             raise ValueError("LLM_MAX_OUTPUT_TOKENS must be nonnegative")
         options = {"max_tokens": limit} if limit else {}
+        effort = os.getenv("LLM_REASONING_EFFORT", "")      # gpt-oss thinks before it answers: low | medium | high
+        if effort:
+            options["model_kwargs"] = {"reasoning_effort": effort}
+        self.max_output_tokens = limit
         self._chat = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0, timeout=timeout, max_retries=max_retries, **options)
 
     def chat(self, system: str, user: str) -> Reply:
@@ -85,6 +89,9 @@ class OpenAICompatible:
         except Exception as e:   # noqa: BLE001 - network, auth, rate limit: the caller decides what to do
             raise LLMError(f"{type(e).__name__}: {e}") from e
         u = getattr(r, "usage_metadata", None) or {}
+        if (getattr(r, "response_metadata", None) or {}).get("finish_reason") == "length" and not str(r.content).strip():
+            # a reasoning model spends the same token budget on thinking and on the answer: a cap that is too low leaves no answer at all
+            raise LLMError(f"the model used all {self.max_output_tokens or 'its default'} output tokens on reasoning and wrote no answer: raise LLM_MAX_OUTPUT_TOKENS or lower LLM_REASONING_EFFORT")
         return Reply(r.content if isinstance(r.content, str) else str(r.content), u.get("input_tokens", 0), u.get("output_tokens", 0))
 
 

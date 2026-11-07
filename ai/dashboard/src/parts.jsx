@@ -66,3 +66,23 @@ export function useAction() {
   const run = async (fn) => { setBusy(true); setError(''); try { return await fn() } catch (e) { setError(e.message); return null } finally { setBusy(false) } }
   return { busy, error, run, setError }
 }
+
+/** Asks for text on the page itself. window.prompt() is blocked in embedded frames and some browsers, which made buttons silently do nothing. */
+export function InlineForm({ fields, submit, busy, error, onSubmit, onCancel }) {
+  const [vals, setVals] = useState(() => Object.fromEntries(fields.map((f) => [f.name, ''])))
+  const missing = fields.find((f) => (vals[f.name] || '').trim().length < (f.min ?? 1))
+  return (
+    <form className="inline-form" onSubmit={(e) => { e.preventDefault(); if (!missing) onSubmit(Object.fromEntries(fields.map((f) => [f.name, vals[f.name].trim()]))) }}>
+      {fields.map((f, k) => (
+        <label key={f.name}>{f.label}
+          <input autoFocus={k === 0} value={vals[f.name]} placeholder={f.placeholder || ''} onChange={(e) => setVals({ ...vals, [f.name]: e.target.value })} />
+          {f.min > 1 && <small className="muted">at least {f.min} characters</small>}
+        </label>))}
+      <ErrorNote error={error} />
+      <div className="actions">
+        <button className="primary" type="submit" disabled={busy || !!missing}>{submit}</button>
+        <button type="button" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  )
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from './api.js'
-import { ErrorNote, useAction } from './parts.jsx'
+import { ErrorNote, InlineForm, useAction } from './parts.jsx'
 
 const norm = (code) => (code || '').replace(/\./g, '').toUpperCase()
 
@@ -42,7 +42,8 @@ export default function Coding({ patient, setWhy, reload, session }) {
 function Worksheet({ w, previousCodes, hasPrevious, absent, canDecide, onChange, setWhy }) {
   const { busy, error, run } = useAction()
   const [principal, setPrincipal] = useState('')
-  const decide = (item, body) => run(async () => { await api(`/coding/${w.id}/items/${item}`, { method: 'POST', body }); await onChange() })
+  const [asking, setAsking] = useState(null)   // { item, mode: 'reject' | 'modify' }
+  const decide = (item, body) => run(async () => { await api(`/coding/${w.id}/items/${item}`, { method: 'POST', body }); await onChange(); return true })
   const final = w.status === 'FINAL'
   const remaining = w.open_items.length
   return (
@@ -58,11 +59,16 @@ function Worksheet({ w, previousCodes, hasPrevious, absent, canDecide, onChange,
             <td>{i.description}{i.flags.map((f, k) => <span key={k} className="tag warn">{f}</span>)}</td>
             <td><button className="link" onClick={() => setWhy({ title: `${i.code} ${i.description}`, rule: i.rationale, sources: [...(i.quote ? [{ ref: i.evidence[0]?.ref || '', label: 'Quoted words', text: `“${i.quote}”` }] : []), ...i.evidence.map((e) => ({ ref: e.ref, text: e.text }))] })}>{i.origin === 'model' ? 'AI-suggested' : 'In EHR'} · {i.status.replace(/_/g, ' ')}</button></td>
             <td>{final || i.decision || !canDecide ? <><b>{i.decision || 'Not reviewed'}</b>{i.reason && <small className="block">Reason: {i.reason}</small>}{i.decided_by && <small className="block">Reviewed by: {i.decided_by}</small>}</> : (
+              asking?.item === i.id ? (
+                <InlineForm busy={busy} error={error} submit={asking.mode === 'reject' ? 'Reject code' : 'Change code'} onCancel={() => setAsking(null)}
+                  fields={asking.mode === 'reject' ? [{ name: 'reason', label: 'Reason for rejecting', min: 5 }] : [{ name: 'code', label: 'Correct ICD-10-CM code', placeholder: 'e.g. J02.0' }, { name: 'reason', label: 'Reason for the change', min: 5 }]}
+                  onSubmit={async (v) => { if (await decide(i.id, asking.mode === 'reject' ? { action: 'reject', reason: v.reason } : { action: 'modify', code: v.code, reason: v.reason })) setAsking(null) }} />
+              ) : (
               <div className="actions">
                 <button disabled={busy} onClick={() => decide(i.id, { action: 'accept' })}>Accept</button>
-                <button disabled={busy} onClick={() => { const r = prompt('Reason for rejecting'); if (r) decide(i.id, { action: 'reject', reason: r }) }}>Reject</button>
-                <button disabled={busy} onClick={() => { const c = prompt('Correct ICD-10-CM code'); const r = c && prompt('Reason for the change'); if (c && r) decide(i.id, { action: 'modify', code: c, reason: r }) }}>Change</button>
-              </div>)}</td>
+                <button disabled={busy} onClick={() => setAsking({ item: i.id, mode: 'reject' })}>Reject</button>
+                <button disabled={busy} onClick={() => setAsking({ item: i.id, mode: 'modify' })}>Change</button>
+              </div>))}</td>
           </tr>))}</tbody>
       </table>
       {absent.length > 0 && <div className="queries"><b>Not suggested in this version — review the earlier version</b><ul>{absent.map((i) => <li key={i.id}>{i.code} · {i.description}{i.decision ? ` · earlier decision: ${i.decision}` : ''}</li>)}</ul><p>Not suggested does not mean the diagnosis is irrelevant.</p></div>}
