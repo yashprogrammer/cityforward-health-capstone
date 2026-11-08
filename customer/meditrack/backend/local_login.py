@@ -37,7 +37,7 @@ def set_password(user_id: str, password: str) -> None:
     with connect() as c:
         if not row(c, 'SELECT USR_ID FROM USR_MST WHERE USR_ID=%s AND IS_ACTV=1', user_id):
             raise ValueError('Staff ID does not exist or is disabled')
-        c.execute("INSERT INTO staff_identity (issuer, subject, user_id) VALUES ('local',%s,%s) ON CONFLICT (issuer,subject) DO UPDATE SET user_id=EXCLUDED.user_id, active=true", (user_id, user_id))
+        c.execute("INSERT INTO staff_identity (issuer, subject, user_id) VALUES ('local',%s,%s) ON CONFLICT (issuer,subject,user_id) DO UPDATE SET active=true", (user_id, user_id))
         c.execute('INSERT INTO local_staff_password VALUES (%s,%s,%s) ON CONFLICT (user_id) DO UPDATE SET salt=EXCLUDED.salt, password_hash=EXCLUDED.password_hash', (user_id, salt, hashed))
         c.execute("UPDATE staff_session SET revoked_at=now() WHERE issuer='local' AND subject=%s AND revoked_at IS NULL", (user_id,))
         audit(c, 'LOCAL_OPERATOR', 'STAFF_PASSWORD_SET', user_id)
@@ -85,7 +85,29 @@ def session(request: Request):
     staff = staff_sessions.get_session(request.cookies.get('mt_session', ''))
     if not staff:
         raise HTTPException(401, 'Staff session is missing or expired')
-    return JSONResponse({'user': staff['USR_ID'], 'name': staff['USR_NM'], 'role': staff['ROLE_CD'], 'unit': staff['UNIT_CD']}, headers={'Cache-Control': 'no-store'})
+    accounts = staff_sessions.linked_accounts(staff['ISSUER'], staff['SUBJECT'])
+    return JSONResponse({'user': staff['USR_ID'], 'name': staff['USR_NM'], 'role': staff['ROLE_CD'], 'unit': staff['UNIT_CD'],
+                         'accounts': [{'user': a['USR_ID'], 'name': a['USR_NM'], 'role': a['ROLE_CD'], 'unit': a['UNIT_CD']} for a in accounts] if len(accounts) > 1 else []},
+                        headers={'Cache-Control': 'no-store'})
+
+
+class Switch(BaseModel):
+    user: str = Field(min_length=1, max_length=64)
+
+
+@router.post('/switch')
+def switch(body: Switch, request: Request, x_csrf_token: str = Header(default='')):
+    """Change to another staff account an administrator linked to the same sign-in. The old session ends, so SMART tokens issued to it stop working."""
+    token = request.cookies.get('mt_session', '')
+    result = staff_sessions.switch_account(token, x_csrf_token, body.user) if x_csrf_token else None
+    if not result:
+        raise HTTPException(403, 'That account is not linked to your sign-in, or the session is invalid')
+    new_token, csrf = result
+    response = JSONResponse({'ok': True}, headers={'Cache-Control': 'no-store'})
+    secure = os.getenv('AUTH_MODE') == 'oidc'
+    response.set_cookie('mt_session', new_token, httponly=True, secure=secure, samesite='lax' if secure else 'strict', max_age=28800, path='/')
+    response.set_cookie('mt_csrf', csrf, httponly=False, secure=secure, samesite='lax' if secure else 'strict', max_age=28800, path='/')
+    return response
 
 
 @router.post('/logout')

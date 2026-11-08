@@ -329,6 +329,9 @@ def _mount_interop() -> None:
 
 _mount_interop()
 
+from .staff_admin import router as staff_admin_router
+app.include_router(staff_admin_router)
+
 if os.getenv('AUTH_MODE') in {'local', 'oidc'}:
     from .local_login import router as local_login_router
     app.include_router(local_login_router)

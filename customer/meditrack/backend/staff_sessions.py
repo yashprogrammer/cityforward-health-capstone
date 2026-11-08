@@ -27,20 +27,42 @@ def session_reference(token: str) -> str:
     return _digest(token)
 
 
-def create_session(issuer: str, subject: str, previous_token: str | None = None) -> tuple[str, str] | None:
-    """Create a new opaque session for an explicitly provisioned, active staff identity."""
+def create_session(issuer: str, subject: str, previous_token: str | None = None, user_id: str | None = None, switched_from: str | None = None) -> tuple[str, str] | None:
+    """Create a new opaque session for an explicitly linked, active staff account.
+
+    An identity linked to several accounts signs in as the one it used last (or `user_id` when given, which is how switching works)."""
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     with connect() as c:
         staff = row(c, '''SELECT u.USR_ID FROM staff_identity i JOIN USR_MST u ON u.USR_ID=i.user_id
-                          WHERE i.issuer=%s AND i.subject=%s AND i.active AND u.IS_ACTV=1 FOR UPDATE OF i''', issuer, subject)
+                          WHERE i.issuer=%s AND i.subject=%s AND i.active AND u.IS_ACTV=1 AND (%s::text IS NULL OR i.user_id=%s)
+                          ORDER BY (SELECT max(s.created_at) FROM staff_session s WHERE s.issuer=i.issuer AND s.subject=i.subject AND s.user_id=i.user_id) DESC NULLS LAST, i.user_id
+                          LIMIT 1 FOR UPDATE OF i''', issuer, subject, user_id, user_id)
         if not staff:
             return None
         if previous_token:
             c.execute('UPDATE staff_session SET revoked_at=now() WHERE session_hash=%s AND revoked_at IS NULL', (_digest(previous_token),))
         c.execute('INSERT INTO staff_session (session_hash, issuer, subject, user_id, csrf_hash) VALUES (%s,%s,%s,%s,%s)',
                   (_digest(token), issuer, subject, staff['USR_ID'], _digest(csrf)))
-        audit(c, staff['USR_ID'], 'STAFF_LOGIN', 'LOCAL' if issuer == 'local' else 'OIDC')
+        if switched_from:
+            audit(c, staff['USR_ID'], 'STAFF_ACCOUNT_SWITCH', f'{switched_from} -> {staff["USR_ID"]}')
+        else:
+            audit(c, staff['USR_ID'], 'STAFF_LOGIN', 'LOCAL' if issuer == 'local' else 'OIDC')
     return token, csrf
+
+
+def linked_accounts(issuer: str, subject: str) -> list[dict]:
+    """The active staff accounts an administrator has linked to this sign-in identity."""
+    with connect() as c:
+        return c.execute('''SELECT u.USR_ID, u.USR_NM, u.ROLE_CD, u.UNIT_CD FROM staff_identity i JOIN USR_MST u ON u.USR_ID=i.user_id
+                           WHERE i.issuer=%s AND i.subject=%s AND i.active AND u.IS_ACTV=1 ORDER BY u.USR_NM''', (issuer, subject)).fetchall()
+
+
+def switch_account(token: str, csrf: str, user_id: str) -> tuple[str, str] | None:
+    """Move a signed-in person to another account linked to the same identity. The old session ends, so tokens issued to it stop working."""
+    staff = get_session(token, csrf=csrf)
+    if not staff or staff['USR_ID'] == user_id:
+        return None
+    return create_session(staff['ISSUER'], staff['SUBJECT'], token, user_id=user_id, switched_from=staff['USR_ID'])
 
 
 def get_session(token: str, *, idle_seconds: int = 900, absolute_seconds: int = 28800, csrf: str | None = None) -> dict | None:
@@ -48,7 +70,7 @@ def get_session(token: str, *, idle_seconds: int = 900, absolute_seconds: int = 
     if not token or idle_seconds <= 0 or absolute_seconds <= 0:
         return None
     with connect() as c:
-        staff = row(c, '''SELECT u.*, s.csrf_hash FROM staff_session s
+        staff = row(c, '''SELECT u.*, s.csrf_hash, s.issuer AS ISSUER, s.subject AS SUBJECT FROM staff_session s
                           JOIN staff_identity i ON i.issuer=s.issuer AND i.subject=s.subject
                           JOIN USR_MST u ON u.USR_ID=i.user_id AND u.USR_ID=s.user_id
                           WHERE s.session_hash=%s AND s.revoked_at IS NULL AND i.active AND u.IS_ACTV=1

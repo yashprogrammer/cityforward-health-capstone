@@ -7,9 +7,9 @@ from functools import lru_cache
 
 import jwt
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import staff_sessions
+from . import staff_admin, staff_sessions
 from .db import connect, row
 
 router = APIRouter(prefix='/auth/entra')
@@ -46,7 +46,16 @@ def _verified_identity(token, msal_claims):
     if (claims.get('tid') != tenant or claims.get('aud') != client
             or not secrets.compare_digest(str(claims.get('nonce', '')), str(msal_claims.get('nonce', '')))):
         raise ValueError('Entra token identity does not match the completed transaction')
-    return claims['iss'], claims['oid']
+    return claims['iss'], claims['oid'], claims
+
+
+NO_ACCOUNT_PAGE = '''<!doctype html><meta charset="utf-8"><title>MediTrack HMS - access</title>
+<body style="font-family:sans-serif;display:grid;place-items:center;min-height:100vh;background:#eef2f7;margin:0">
+<main style="background:#fff;padding:32px;border-radius:8px;max-width:420px;box-shadow:0 4px 20px #0002">
+<h1 style="margin-top:0">MediTrack HMS</h1>
+<p><b>Your Microsoft account is not assigned to a MediTrack staff account.</b></p>
+<p>Your sign-in was recorded as an access request. Ask IT (ext. 2204) to assign it, then sign in again.</p>
+<p><a href="/">Back to sign in</a></p></main></body>'''
 
 
 def _digest(value):
@@ -90,12 +99,16 @@ def callback(request: Request):
         result = _client().acquire_token_by_auth_code_flow(flow, dict(request.query_params))
         if not result.get('id_token') or not result.get('id_token_claims'):
             raise ValueError('missing identity token')
-        issuer, subject = _verified_identity(result['id_token'], result['id_token_claims'])
+        issuer, subject, claims = _verified_identity(result['id_token'], result['id_token_claims'])
         session = staff_sessions.create_session(issuer, subject, request.cookies.get('mt_session'))
     except Exception as exc:
         raise HTTPException(401, 'Entra sign-in could not be verified') from exc
     if not session:
-        raise HTTPException(403, 'This Entra identity is not assigned to an active staff account')
+        try:      # keep the attempt so an administrator can assign this person from the staff dashboard
+            staff_admin.record_access_request(issuer, subject, claims.get('name'), claims.get('email') or claims.get('preferred_username'))
+        except Exception:
+            pass
+        return HTMLResponse(NO_ACCOUNT_PAGE, status_code=403, headers={'Cache-Control': 'no-store'})
     token, csrf = session
     response = RedirectResponse('/', status_code=303, headers={'Cache-Control': 'no-store'})
     response.delete_cookie('mt_oidc', path='/auth/entra/callback', secure=True, httponly=True, samesite='lax')

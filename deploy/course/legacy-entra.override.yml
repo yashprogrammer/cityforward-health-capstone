@@ -1,0 +1,25 @@
+# Legacy MediTrack with Microsoft sign-in instead of the user-switch box.
+#
+# Layered on top of the legacy stack's own compose files (project cityforward-course), so the database, document and hot-folder
+# volumes, the gateway and the webhook sender stay exactly as they were. Only the image and the sign-in settings change: the image is the
+# current MediTrack build (the one the integrated copy runs), and the app starts in Microsoft sign-in mode. Staff links are shared with the
+# integrated app because both use the same database, so the same people can sign in to both.
+#
+# Run from ~/cityforward on the VM (ENTRA_* come from the integrated deployment's runtime.conf; PUBLIC_BASE_URL is the legacy address):
+#
+#   sudo env PUBLIC_BASE_URL=https://$DEMO_DOMAIN docker compose --env-file ~/cityforward-integrated/runtime.conf \
+#     -p cityforward-course -f docker-compose.yml -f poc/deploy/compose.yaml -f legacy-entra.override.yml up -d --no-deps meditrack
+#
+# Roll back by running the same command without `-f legacy-entra.override.yml`.
+#
+# The Entra app registration must list https://<domain>/auth/entra/callback as a redirect URI (the integrated copy's :8443 one is separate).
+services:
+  meditrack:
+    image: cityforward-integrated-customer:course
+    environment:
+      APP_ENV: deployment
+      AUTH_MODE: oidc
+      ENABLE_ENTRA_OIDC: '1'
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID}
+      ENTRA_MANAGED_IDENTITY_CLIENT_ID: ${ENTRA_MANAGED_IDENTITY_CLIENT_ID}

@@ -10,12 +10,17 @@ from .db import connect, row
 _PATIENT = re.compile(r'^/int/ip/([^/]+)(?:/(.*))?$')
 _DOCUMENT = re.compile(r'^/int/docs/(\d+)$')
 _ADMIN_ROUTES = (
-    ('GET', re.compile(r'^/int/admin/(extlinks|smart/clients|webhooks|webhooks/outbox)$')),
+    ('GET', re.compile(r'^/int/admin/(extlinks|smart/clients|webhooks|webhooks/outbox|staff|access-requests|sessions)$')),
     ('POST', re.compile(r'^/int/admin/(extlinks|smart/clients|webhooks)$')),
     ('POST', re.compile(r'^/int/admin/extlinks/\d+/toggle$')),
     ('POST', re.compile(r'^/int/admin/smart/clients/[^/]+/toggle$')),
     ('POST', re.compile(r'^/int/admin/webhooks/\d+/toggle$')),
     ('POST', re.compile(r'^/int/admin/webhooks/outbox/\d+/replay$')),
+    ('POST', re.compile(r'^/int/admin/staff$')),
+    ('POST', re.compile(r'^/int/admin/staff/[a-z][a-z0-9._-]{2,31}/(update|active|links)$')),
+    ('POST', re.compile(r'^/int/admin/links/(enable|disable|remove)$')),
+    ('POST', re.compile(r'^/int/admin/access-requests/(assign|dismiss)$')),
+    ('POST', re.compile(r'^/int/admin/sessions/revoke$')),
 )
 
 

@@ -1,18 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { api, fd, post, useLoad } from './lib.js'
+import StaffAccess, { AccountMenu } from './StaffAccess.jsx'
 
-const api = async (path, opts) => {
-  const r = await fetch(path, opts)
-  if (r.status === 401 && path.startsWith('/int/')) window.dispatchEvent(new Event('meditrack-session-expired'))
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `ERROR ${r.status}`)
-  return r.json()
-}
-const post = (path, body) => {
-  const csrf = (document.cookie.match(/(?:^|; )mt_csrf=([^;]*)/) || [])[1]
-  return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {}) }, body: body ? JSON.stringify(body) : undefined })
-}
-
-// MediTrack stores dates as 'YYYY-MM-DD HH:MM' text; US screens show MM/DD/YYYY
-const fd = (s) => (s ? s.replace(/^(\d{4})-(\d{2})-(\d{2})/, '$2/$3/$1') : '')
 const pay = (m) => (m ? m.replace('_', ' ') : '')
 
 function useHash() {
@@ -23,17 +12,6 @@ function useHash() {
     return () => window.removeEventListener('hashchange', on)
   }, [])
   return hash
-}
-
-function useLoad(fn, deps) {
-  const [data, setData] = useState(null)
-  const [err, setErr] = useState(null)
-  const reload = useCallback(() => {
-    fn().then(setData).catch((e) => setErr(e.message))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
-  useEffect(reload, [reload])
-  return [data, err, reload]
 }
 
 const Sts = ({ s }) => <span className={`sts ${s}`}>{{ ADM: 'ADMITTED', DA: 'DISCH. ADVISED', DSCH: 'DISCHARGED', CLS: 'CLOSED' }[s] || s}</span>
@@ -422,6 +400,10 @@ export default function App() {
   const hash = useHash()
   const [session, sessionError] = useLoad(() => api('/auth/session'), [])
   const [expired, setExpired] = useState(false)
+  const [waiting, , reloadPending] = useLoad(() => (session?.role === 'IT_ADMIN' ? api('/int/admin/access-requests') : Promise.resolve([])), [session?.role])
+  const pending = waiting?.filter((r) => r.STATUS === 'PENDING').length || 0
+  // administrators have no patients, so their first page is staff administration rather than an empty census
+  useEffect(() => { if (session?.role === 'IT_ADMIN' && !window.location.hash) window.location.hash = '#/admin/staff' }, [session?.role])
   const [logoutError, setLogoutError] = useState('')
   useEffect(() => { const on = () => setExpired(true); window.addEventListener('meditrack-session-expired', on); return () => window.removeEventListener('meditrack-session-expired', on) }, [])
   const logout = async () => { try { await post('/auth/logout'); setExpired(true); window.location.replace('/') } catch (e) { setLogoutError(e.message) } }
@@ -429,7 +411,7 @@ export default function App() {
   const nav = [
     ['In-Patient (IPD)', [['#/census', 'IPD Census'], ['#/discharged', 'Discharged Patients']]],
     ['Reports', [['#/mis', 'MIS: Discharge TAT']]],
-    ...(session?.role === 'IT_ADMIN' ? [['System Admin', [['#/admin/links', 'External Links'], ['#/admin/webhooks', 'Event Webhooks'], ['#/audit', 'Audit Trail']]]] : []),
+    ...(session?.role === 'IT_ADMIN' ? [['System Admin', [['#/admin/staff', pending ? `Staff & Access (${pending})` : 'Staff & Access'], ['#/admin/links', 'External Links'], ['#/admin/webhooks', 'Event Webhooks'], ['#/audit', 'Audit Trail']]]] : []),
     ...(session?.role === 'COMPLIANCE' ? [['System Admin', [['#/audit', 'Audit Trail']]]] : []),
   ]
   if (expired || sessionError) return <Login />
@@ -438,7 +420,7 @@ export default function App() {
     <>
       <div className="banner">
         <span className="logo">MediTrack HMS<small>v3.4.0 &middot; CityForward Health, Columbus OH</small></span>
-        <span className="user">{session.name} · {session.role} <button onClick={logout}>Log out</button>{logoutError && <span className="err">{logoutError}</span>}</span>
+        <span className="user">{session.name} · {session.role} {session.accounts?.length > 1 && <AccountMenu session={session} />} <button onClick={logout}>Log out</button>{logoutError && <span className="err">{logoutError}</span>}</span>
       </div>
       <div className="ticker">&#9888; Scheduled server maintenance: Sunday 02:00-04:00 AM. Please save your work. &middot; Lab results interface (HL7) delayed by 15 min on weekends. &middot; Contact IT ext. 2204 for password reset.</div>
       <div className="layout">
@@ -453,6 +435,7 @@ export default function App() {
         <div className="main">
           {ipMatch ? <Patient ip={ipMatch[1]} key={ipMatch[1]} session={session} />
             : hash === '#/discharged' ? <Discharged />
+            : hash === '#/admin/staff' ? <StaffAccess onChange={reloadPending} />
             : hash === '#/admin/links' ? <ExtLinks />
             : hash === '#/admin/webhooks' ? <Webhooks />
             : hash === '#/mis' ? <Mis />

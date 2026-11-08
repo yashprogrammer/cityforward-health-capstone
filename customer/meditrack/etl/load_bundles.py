@@ -104,6 +104,77 @@ DOC_TITLES = {"ID_PROOF": "Photo ID (scan)", "INS_CARD": "Insurance card (scan)"
               "CATH_RPT": "Cardiac catheterization report", "DEVICE_LOG": "Implant record / device log", "OP_NOTE": "Operative report"}
 
 
+def target_diagnoses(by_type, case, target, companion, admit, encounters) -> list[tuple[str, str, str]]:
+    """The diagnoses `load_cases` attaches to a case's own admission, in the order it inserts them: conditions filed under the admission (or the ED visit
+    that led to it), then the working diagnosis and the problems still active on arrival. Used to repair a database that was seeded before the second step existed."""
+    mine = {"urn:uuid:" + target["id"]} | ({"urn:uuid:" + companion["id"]} if companion else set())
+    known = {"urn:uuid:" + e["id"] for e in encounters}
+    earliest = min((e for e in encounters if e is not companion), key=lambda e: e["period"]["start"])
+    typ = "PROV" if case["status"] == "ADM" else "FINAL"
+    out, seen = [], set()
+    for c in by_type["Condition"]:
+        icd = next((x["code"] for x in c["code"]["coding"] if x["system"].endswith("icd-10-cm")), None)
+        sct = next((x["code"] for x in c["code"]["coding"] if x["system"].endswith("sct")), None)
+        icd = icd or M.SNOMED_TO_ICD10CM.get(sct or "")
+        ref = (c.get("encounter") or {}).get("reference")
+        # a condition with no usable visit is filed under the patient's earliest visit; that is this admission only when it is the earliest
+        lands_here = ref in mine or (ref not in known and earliest is target)
+        if icd and lands_here and icd not in seen:
+            seen.add(icd)
+            desc = clean(next((x.get("display") for x in c["code"]["coding"] if x["system"].endswith("icd-10-cm")), None) or c["code"].get("text", ""))
+            out.append((icd, desc, typ))
+    reason_sct = next((x["code"] for x in ((target.get("reasonCode") or [{}])[0].get("coding") or []) if x["system"].endswith("sct")), None)
+    carried = [(M.SNOMED_TO_ICD10CM.get(reason_sct or ""), clean(((target.get("reasonCode") or [{}])[0].get("coding") or [{}])[0].get("display") or ""))]
+    for c in by_type["Condition"]:
+        if c.get("clinicalStatus", {}).get("coding", [{}])[0].get("code") == "active" and parse(c.get("onsetDateTime") or case["admit"]) <= admit:
+            sct = next((x["code"] for x in c["code"]["coding"] if x["system"].endswith("sct")), None)
+            carried.append((M.SNOMED_TO_ICD10CM.get(sct or ""), clean(c["code"].get("text", ""))))
+    for icd, desc in carried:
+        if icd and icd not in seen:
+            seen.add(icd)
+            out.append((icd, desc, typ))
+    return out
+
+
+def backfill_current_admission_diagnoses(conn, root: Path, statuses=("ADM", "DA"), apply: bool = False) -> list[dict]:
+    """Give current admissions the diagnoses a fresh seed would give them, without reseeding.
+
+    Only admissions that have no diagnosis rows at all are touched, so it is safe to run twice and never changes a diagnosis that exists.
+    Each admission is found by patient (MRN), ward, status and admit time, not by its account number, which depends on how the database was seeded."""
+    report = []
+    for case in json.load(open(root / "manifest.json")):
+        if case["status"] not in statuses:
+            continue
+        bundle = json.load(open(root / case["file"]))
+        by_type = collections.defaultdict(list)
+        for e in bundle["entry"]:
+            by_type[e["resource"]["resourceType"]].append(e["resource"])
+        encs = sorted(by_type["Encounter"], key=lambda e: e["period"]["start"])
+        target = next(e for e in encs if e["id"] == case["encounter_id"])
+        t_start = parse(target["period"]["start"])
+        companion = next((e for e in encs if e["class"]["code"] == "EMER" and e["id"] != target["id"]
+                          and t_start - timedelta(hours=3) <= parse(e["period"].get("end", e["period"]["start"])) <= t_start), None)
+        rows = target_diagnoses(by_type, case, target, companion, parse(case["admit"]), encs)
+        adm = conn.execute("SELECT a.IP_NO FROM IP_ADM_DTL a JOIN PT_MST p ON p.PT_ID=a.PT_ID WHERE p.MRN=%s AND a.ENC_CLS='IMP' AND a.STS=%s AND a.WRD_CD=%s AND a.ADM_DT=%s",
+                           (case["mrn"], case["status"], case["unit"], txt(t_start))).fetchone()
+        entry = {"case": case["case"], "mrn": case["mrn"], "ip_no": adm["IP_NO"] if adm else None, "diagnoses": rows}
+        if not adm:
+            entry["result"] = "admission not found"
+        else:
+            have = conn.execute("SELECT COUNT(*) AS N FROM IP_DIAG_DTL WHERE IP_NO=%s", (adm["IP_NO"],)).fetchone()["N"]
+            if have:
+                entry["result"] = f"already has {have}, left alone"
+            elif not rows:
+                entry["result"] = "nothing to add"
+            else:
+                if apply:
+                    for icd, desc, typ in rows:
+                        conn.execute("INSERT INTO IP_DIAG_DTL (IP_NO, ICD_CD, DIAG_DESC, DIAG_TYP) VALUES (%s,%s,%s,%s)", (adm["IP_NO"], icd, desc, typ))
+                entry["result"] = f"{'added' if apply else 'would add'} {len(rows)}"
+        report.append(entry)
+    return report
+
+
 def load_cases(conn, root: Path, docs_dir: Path) -> dict:
     manifest = json.load(open(root / "manifest.json"))
     counter = Counter()
