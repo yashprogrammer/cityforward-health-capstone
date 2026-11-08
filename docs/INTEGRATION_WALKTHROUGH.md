@@ -347,12 +347,69 @@ other-patient guard, bare-placeholder restore.
 drug named) and no reliable speed gain. Keep `medium`. Latency is about 1 to 11
 seconds per question and varies with how long the model thinks.
 
-**Known limits.** The Azure image uses the `hash` embedder (word matching), not a
-semantic model. The code supports real embeddings (`FASTEMBED=1` build argument and
-`EMBEDDER=fastembed`, 384 dimensions, same schema), but switching needs a rebuild
-and clearing and re-indexing the AI database's chunks, so it was not done here.
-Wording the synonym list does not cover can still miss. This was run on one patient;
-other charts have different gaps.
+**Known limits.** Section 9 switches Azure to a real embedder and re-runs this
+battery. Wording the synonym list does not cover can still miss. This was run on one
+patient; other charts have different gaps.
+
+### 9. Real embedder, prior-authorization click-through, restart behavior (2026-11-08)
+
+**Real embedder on Azure.** `deploy/course/azure-integrated.yml` now builds the AI
+image with `args: {FASTEMBED: '1'}` (the BAAI/bge-small-en-v1.5 model is baked into the
+image, so nothing is downloaded at run time) and runs it with `EMBEDDER=fastembed`.
+The vector size is 384 either way, so the schema is unchanged, but vectors from the two
+embedders are not comparable. After the switch, clear the stored vectors and let them be
+rebuilt:
+
+```bash
+# on the VM, from ~/cityforward-integrated
+sudo docker compose -p cityforward-integrated --env-file runtime.conf -f deploy/course/azure-integrated.yml build ai-integrated
+sudo docker compose -p cityforward-integrated --env-file runtime.conf -f deploy/course/azure-integrated.yml up -d --no-deps ai-integrated
+sudo docker exec cityforward-course-db-1 psql -U postgres -d cityforward_integrated_ai -c "delete from chunk" -c "delete from patient_index"
+# then re-index (opening a patient's dashboard also does this): rag.index_chart(app._chart(patient_id)) inside the container
+```
+
+The build took a few minutes. Re-indexing four patients (615 chunks) took about 30
+seconds. `/healthz` now reports `BAAI/bge-small-en-v1.5` as the embedder.
+
+Result: the same 31-question battery gives **27 pass, 0 fail, 4 review**, the same as
+the hash embedder, and latency stayed in the 0.5 to 12 second range. One question
+fell back to passages because Foundry returned a token-rate-limit error
+(`exceeded token rate limit`); that is the provider's quota, the fallback behaved as
+designed, and the same question answered correctly when repeated. The hash embedder
+remains the default for tests and offline use.
+
+**Prior-authorization click-through** (Dr. Priya Raman, patient IP2610-0151 Margaret
+Doyle, whose chart is on another unit, so access came through the emergency-access
+form; the earlier 4-hour grant had expired):
+
+| Step | Result |
+|---|---|
+| Open the tab | Two suggestions: rolling walker (E0143) and skilled nursing admission (SNF-ADM) |
+| Prepare draft (walker) | Draft built with evidence-backed statements for each requirement |
+| Provide... on an undocumented requirement | Inline form opens; Save stays disabled under 20 characters; the statement saved and shows "Provided by clinician" |
+| Approve for submission | Moved to APPROVED (no open gaps, so no extra confirmation) |
+| Submit to payer | Payer answered "A4, clinical review in progress" |
+| Check payer decision | Request became CERTIFIED |
+| Webhook | MediTrack's signed `document.added` events reached the AI service and were recorded in `event_inbox` |
+
+Only Doyle has suggestions in this seed (Dr. Raman's own unit has none), which is why
+her chart was used. **Not clicked through:** the Confirm form (needs a "candidate"
+requirement) and the Approve anyway form (needs an open gap): no seeded request produced
+either, and creating one by calling the API would have meant reusing the browser
+session's bearer token, which was not done.
+
+**Logout** returns to the sign-in page. Token revocation after logout and Entra session
+binding are covered by the automated tests (`test_smart_token_verification.py`,
+`test_entra_smart_integration.py`); a replay of a live token after logout on Azure was
+not run.
+
+**Restart behavior (found today).** The VM had auto-shut down. After `az vm start`,
+every container came back except the shared Postgres container
+(`cityforward-course-db-1`, restart policy `no`), so the legacy and integrated apps both
+showed errors until it was started. Fix: `sudo docker start cityforward-course-db-1`,
+then restart the services that depend on it. It is now set to `unless-stopped`
+(`sudo docker update --restart unless-stopped cityforward-course-db-1`), but any new
+deployment should set that in its compose file.
 
 Do not run the destructive legacy seed against the existing Azure database.
 
