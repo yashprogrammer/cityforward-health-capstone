@@ -547,7 +547,7 @@ sudo env PUBLIC_BASE_URL=https://$DEMO_DOMAIN docker compose --env-file ~/cityfo
 **Not tested:** signing in to legacy as a second Microsoft user, and watching a webhook event leave the
 recreated legacy container.
 
-### 11. Empty Diagnosis tab on current admissions (2026-11-08)
+### 12. Empty Diagnosis tab on current admissions (2026-11-08)
 
 **Symptom.** Opening a current admission in MediTrack (for example IP2610-0204, chronic heart
 failure) showed "No records found" on the Diagnosis tab.
