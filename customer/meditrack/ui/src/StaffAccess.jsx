@@ -18,23 +18,30 @@ function useAction() {
 
 const Err = ({ error }) => (error ? <div className="err" role="alert" style={{ margin: '6px 0' }}>{error}</div> : null)
 
-function ProfileForm({ meta, initial, submit, onSubmit, onCancel, busy, error }) {
+function ProfileForm({ meta, initial, submit, onSubmit, onCancel, busy, error, create }) {
   const [f, setF] = useState(initial)
   const set = (k, v) => setF((o) => ({ ...o, [k]: v }))
   const needsUnit = meta.unit_roles.includes(f.role)
   const clinician = meta.clinician_roles.includes(f.role)
+  const prefix = `${meta.role_prefix[f.role]}.`
   const pick = (role) => setF((o) => ({ ...o, role, unit: meta.unit_roles.includes(role) ? (o.unit === 'ALL' ? meta.units[0] : o.unit) : 'ALL', dr_id: meta.clinician_roles.includes(role) ? o.dr_id : '' }))
+  const ready = f.name.trim().length >= 3 && (!create || f.ident.length > 0)
   return (
     <form className="formrow" onSubmit={(e) => { e.preventDefault(); onSubmit({ ...f, dr_id: f.dr_id || null }) }}>
-      {'user_id' in f && <label>Staff ID <input type="text" size={16} value={f.user_id} onChange={(e) => set('user_id', e.target.value)} placeholder="nurse.smith" /></label>}
+      {create && <label>Staff ID <span style={{ whiteSpace: 'nowrap' }}>
+        <code style={{ background: '#eef1f5', border: '1px solid var(--line)', borderRight: 'none', borderRadius: '3px 0 0 3px', padding: '4px 6px' }}>{prefix}</code>
+        <input type="text" size={14} maxLength={32 - prefix.length} value={f.ident} placeholder="smith" style={{ borderRadius: '0 3px 3px 0' }}
+          onChange={(e) => set('ident', e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''))} /></span></label>}
       <label>Name <input type="text" size={26} value={f.name} onChange={(e) => set('name', e.target.value)} /></label>
       <label>Role <select value={f.role} onChange={(e) => pick(e.target.value)}>{meta.roles.map((r) => <option key={r} value={r}>{ROLE[r] || r}</option>)}</select></label>
       <label>Ward <select value={needsUnit ? f.unit : 'ALL'} disabled={!needsUnit} onChange={(e) => set('unit', e.target.value)}>
         {needsUnit ? meta.units.map((u) => <option key={u}>{u}</option>) : <option>ALL</option>}</select></label>
       {clinician && <label>Practitioner record <select value={f.dr_id || ''} onChange={(e) => set('dr_id', e.target.value)}>
         <option value="">none</option>{meta.practitioners.map((p) => <option key={p.DR_ID} value={p.DR_ID}>{p.DR_NM}</option>)}</select></label>}
-      <button className="primary" disabled={busy || f.name.trim().length < 3}>{busy ? 'Saving…' : submit}</button>
+      {create && meta.entra_enabled && <label>Entra object ID <input type="text" size={38} value={f.subject} onChange={(e) => set('subject', e.target.value)} placeholder="optional: link their Microsoft sign-in now" /></label>}
+      <button className="primary" disabled={busy || !ready}>{busy ? 'Saving…' : submit}</button>
       <button type="button" onClick={onCancel}>Cancel</button>
+      {create && f.ident && <span className="hint">Staff ID will be <b>{prefix}{f.ident}</b></span>}
       <Err error={error} />
     </form>
   )
@@ -79,7 +86,7 @@ function StaffTab({ meta, reload }) {
   const q = text.trim().toLowerCase()
   const shown = meta.staff.filter((s) => (inactive || s.IS_ACTV) && (!role || s.ROLE_CD === role) && (!q || `${s.USR_ID} ${s.USR_NM}`.toLowerCase().includes(q)))
   const setActive = async (s, active) => { if (await rowRun(() => post(`/int/admin/staff/${s.USR_ID}/active`, { active }))) { setConfirming(null); reload() } }
-  const fresh = { user_id: '', name: '', role: 'NURSE', unit: meta.units[0], dr_id: '' }
+  const fresh = { ident: '', name: '', role: 'NURSE', unit: meta.units[0], dr_id: '', subject: '' }
   return (
     <>
       <div className="formrow" style={{ marginBottom: 8 }}>
@@ -90,8 +97,8 @@ function StaffTab({ meta, reload }) {
         <span className="hint">{shown.length} of {meta.staff.length} accounts</span>
       </div>
       {adding && <fieldset><legend>New staff account</legend>
-        <ProfileForm meta={meta} initial={fresh} submit="Create account" busy={busy} error={error} onCancel={() => setAdding(false)}
-          onSubmit={async (f) => { if (await run(() => post('/int/admin/staff', { ...f, user_id: f.user_id.trim() }))) { setAdding(false); reload() } }} />
+        <ProfileForm create meta={meta} initial={fresh} submit="Create account" busy={busy} error={error} onCancel={() => setAdding(false)}
+          onSubmit={async ({ ident, subject, ...f }) => { if (await run(() => post('/int/admin/staff', { ...f, user_id: `${meta.role_prefix[f.role]}.${ident}`, subject: subject.trim() || null }))) { setAdding(false); reload() } }} />
       </fieldset>}
       <Err error={rowError} />
       <table className="grid">

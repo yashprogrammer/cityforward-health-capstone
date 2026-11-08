@@ -446,6 +446,13 @@ sign-in, `switch_account`), `entra_login.py` (records unassigned sign-ins), `loc
 that widens the `staff_identity` key to `(issuer, subject, user_id)`; it ran against the live
 database and kept the existing link), and the UI in `customer/meditrack/ui/src/StaffAccess.jsx`.
 
+**Staff ID format.** A new account's Staff ID is `{role prefix}.{name}`. The prefix comes from the
+Role dropdown and cannot be edited (`attending.`, `res.`, `nurse.`, `him.`, `pa.`, `it.`,
+`compliance.`, matching the seeded IDs); the administrator types only the name or number, and the
+server enforces the prefix too. The create form also has an optional **Entra object ID**: if given,
+the account is created and linked in one step, and a bad ID creates nothing. Changing an existing
+account's role later does not rename its Staff ID.
+
 **Bootstrap the first administrator.** The dashboard needs an administrator to exist. Link your
 Entra object ID to `it.admin` once, in SQL; everything after that is done in the dashboard:
 
@@ -454,7 +461,10 @@ INSERT INTO staff_identity (issuer, subject, user_id, linked_by)
 VALUES ('https://login.microsoftonline.com/<tenant id>/v2.0', '<your Entra object ID>', 'it.admin', 'bootstrap');
 ```
 
-**Adding a real person.** In the Entra admin center create or invite the user. Either copy their
+**Adding a real person.** The app accepts only users of your own Microsoft tenant: a brand-new
+personal Microsoft account (outlook.com, a different Gmail) cannot sign in unless it is first
+invited to the tenant as a guest, or you create a member user there. In the Entra admin center
+create or invite the user. Either copy their
 Object ID and use "+ Link sign-in" on their staff account, or ask them to sign in once, then
 assign them from Access requests.
 

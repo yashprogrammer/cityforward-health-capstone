@@ -19,6 +19,8 @@ router = APIRouter(prefix='/int/admin')
 ROLES = ('ATTENDING', 'RESIDENT', 'NURSE', 'HIM_CODER', 'PA_COORD', 'IT_ADMIN', 'COMPLIANCE')
 UNIT_ROLES = ('ATTENDING', 'RESIDENT', 'NURSE')      # these work on one ward; every other role is hospital-wide ("ALL")
 CLINICIANS = ('ATTENDING', 'RESIDENT')               # these may point at a practitioner record (the FHIR fhirUser)
+# A new Staff ID reads {role prefix}.{name}: the prefix comes from the role (as in attending.raman, res.etran, nurse.lopez), the admin adds the name.
+ROLE_PREFIX = {'ATTENDING': 'attending', 'RESIDENT': 'res', 'NURSE': 'nurse', 'HIM_CODER': 'him', 'PA_COORD': 'pa', 'IT_ADMIN': 'it', 'COMPLIANCE': 'compliance'}
 _STAFF_ID = re.compile(r'^[a-z][a-z0-9._-]{2,31}$')
 _OBJECT_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -103,7 +105,7 @@ def list_staff(request: Request):
         s['IDENTITIES'] = by_user.get(s['USR_ID'], [])
         s['LAST_LOGIN'] = seen.get(s['USR_ID'], {}).get('LAST_LOGIN')
         s['OPEN_SESSIONS'] = seen.get(s['USR_ID'], {}).get('OPEN_SESSIONS', 0)
-    return {'staff': staff, 'roles': ROLES, 'unit_roles': UNIT_ROLES, 'clinician_roles': CLINICIANS, 'units': units, 'practitioners': practitioners,
+    return {'staff': staff, 'roles': ROLES, 'unit_roles': UNIT_ROLES, 'clinician_roles': CLINICIANS, 'role_prefix': ROLE_PREFIX, 'units': units, 'practitioners': practitioners,
             'entra_enabled': _entra_issuer() is not None, 'me': _me(request)['USR_ID']}
 
 
@@ -113,19 +115,32 @@ class StaffIn(BaseModel):
     role: Literal['ATTENDING', 'RESIDENT', 'NURSE', 'HIM_CODER', 'PA_COORD', 'IT_ADMIN', 'COMPLIANCE']
     unit: str = 'ALL'
     dr_id: str | None = None
+    subject: str | None = None      # optional Entra object ID, linked in the same step
 
 
 @router.post('/staff')
 def create_staff(body: StaffIn, request: Request):
     user_id = body.user_id.strip().lower()
+    prefix = ROLE_PREFIX[body.role] + '.'
+    if not user_id.startswith(prefix) or len(user_id) == len(prefix):
+        raise HTTPException(400, f'A {body.role.replace("_", " ").title()} Staff ID starts with "{prefix}" followed by a name or number, for example {prefix}smith')
     if not _STAFF_ID.fullmatch(user_id):
         raise HTTPException(400, 'Staff ID: 3 to 32 characters, lowercase letters, digits, dot, dash or underscore, starting with a letter')
+    subject = (body.subject or '').strip().lower() or None
+    if subject:      # checked before anything is saved, so a bad object ID never leaves a half-created account
+        if not _entra_issuer():
+            raise HTTPException(400, 'Microsoft sign-in is not enabled on this system')
+        if not _OBJECT_ID.fullmatch(subject):
+            raise HTTPException(400, 'Enter the Entra object ID: 8-4-4-4-12 letters and digits, as shown in the Entra admin center')
+    me = _me(request)
     with connect() as c:
         if row(c, 'SELECT 1 AS X FROM USR_MST WHERE USR_ID=%s', user_id):
             raise HTTPException(409, 'That staff ID already exists')
         unit, dr_id = _check_profile(c, body.role, body.unit, body.dr_id)
         c.execute('INSERT INTO USR_MST VALUES (%s,%s,%s,%s,%s,1)', (user_id, body.name.strip(), body.role, unit, dr_id))
-        audit(c, _me(request)['USR_ID'], 'STAFF_CREATED', f'{user_id} {body.role} {unit}')
+        audit(c, me['USR_ID'], 'STAFF_CREATED', f'{user_id} {body.role} {unit}')
+        if subject:
+            _link(c, _entra_issuer(), subject, user_id, me['USR_ID'])
     return {'ok': True, 'user_id': user_id}
 
 

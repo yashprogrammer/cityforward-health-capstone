@@ -53,10 +53,14 @@ def test_only_an_administrator_can_manage_staff(client):
 
 def test_admin_creates_edits_and_deactivates_staff(admin):
     listing = admin.get('/int/admin/staff').json()
+    assert listing['role_prefix'] == {'ATTENDING': 'attending', 'RESIDENT': 'res', 'NURSE': 'nurse', 'HIM_CODER': 'him', 'PA_COORD': 'pa', 'IT_ADMIN': 'it', 'COMPLIANCE': 'compliance'}
     assert {'ATTENDING', 'NURSE', 'IT_ADMIN'} <= set(listing['roles']) and '4W-CARD' in listing['units'] and listing['me'] == 'it.admin'
     body = {'user_id': 'nurse.ames', 'name': 'Dana Ames, RN', 'role': 'NURSE', 'unit': '4W-CARD'}
     assert post(admin, '/int/admin/staff', {**body, 'unit': 'NOWHERE'}).status_code == 400          # a nurse needs a real ward
     assert post(admin, '/int/admin/staff', {**body, 'user_id': 'Bad Id!'}).status_code == 400
+    assert post(admin, '/int/admin/staff', {**body, 'user_id': 'attending.ames'}).status_code == 400   # the Staff ID starts with the role's prefix
+    assert post(admin, '/int/admin/staff', {**body, 'user_id': 'nurse.'}).status_code == 400            # and needs a name after it
+    assert 'nurse.' in post(admin, '/int/admin/staff', {**body, 'user_id': 'res.ames'}).json()['detail']
     assert post(admin, '/int/admin/staff', {**body, 'role': 'ASTRONAUT'}).status_code == 422
     assert post(admin, '/int/admin/staff', {**body, 'dr_id': 'DR-1'}).status_code == 400            # nurses do not link to a practitioner record
     assert post(admin, '/int/admin/staff', body).status_code == 200
@@ -80,6 +84,20 @@ def test_admin_creates_edits_and_deactivates_staff(admin):
     assert post(admin, '/int/admin/staff/nurse.ames/active', {'active': True}).status_code == 200
     actions = [r['ACTN'] for r in admin.get('/int/audit').json()]
     assert {'STAFF_CREATED', 'STAFF_UPDATED', 'STAFF_DEACTIVATED', 'STAFF_REACTIVATED'} <= set(actions)
+
+
+def test_a_new_account_can_be_linked_to_a_sign_in_when_it_is_created(admin):
+    body = {'user_id': 'nurse.linked', 'name': 'Lin Ked, RN', 'role': 'NURSE', 'unit': '4W-CARD'}
+    assert post(admin, '/int/admin/staff', {**body, 'subject': 'not-a-guid'}).status_code == 400
+    assert not [s for s in admin.get('/int/admin/staff').json()['staff'] if s['USR_ID'] == 'nurse.linked']   # a bad object ID leaves no half-made account
+    assert post(admin, '/int/admin/staff', {**body, 'subject': OID_A.upper()}).status_code == 200
+    made = staff_row(admin, 'nurse.linked')
+    assert [(i['SUBJECT'], i['ISSUER'], i['ACTIVE'], i['LINKED_BY']) for i in made['IDENTITIES']] == [(OID_A, ISSUER, True, 'it.admin')]
+    actions = [r['ACTN'] for r in admin.get('/int/audit').json()[:3]]
+    assert 'STAFF_CREATED' in actions and 'IDENTITY_LINKED' in actions
+    # without a sign-in the account is created unlinked, as before
+    assert post(admin, '/int/admin/staff', {**body, 'user_id': 'nurse.unlinked', 'subject': ''}).status_code == 200
+    assert staff_row(admin, 'nurse.unlinked')['IDENTITIES'] == []
 
 
 def test_an_administrator_cannot_lock_themselves_out(admin):
