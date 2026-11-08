@@ -1,4 +1,5 @@
 import os
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +26,12 @@ def upper_row(cursor):
 
 
 _pool: ConnectionPool | None = None
+staff_actor: ContextVar[str | None] = ContextVar('meditrack_staff_actor', default=None)
+
+
+def effective_actor(fallback: str) -> str:
+    """Use verified request identity for interactive actions; retain service actor outside requests."""
+    return staff_actor.get() or fallback
 
 
 def connect():
@@ -41,6 +48,14 @@ def connect_once() -> psycopg.Connection:
     return psycopg.connect(DB_URL, row_factory=upper_row)
 
 
+def close_pool() -> None:
+    """Release pooled connections when a short-lived management command exits."""
+    global _pool
+    if _pool is not None:
+        _pool.close()
+        _pool = None
+
+
 def now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -54,4 +69,4 @@ def row(conn, sql: str, *args) -> dict | None:
 
 
 def audit(conn, usr: str, actn: str, ref: str) -> None:
-    conn.execute("INSERT INTO SYS_AUDIT (TS, USR, ACTN, REF) VALUES (%s,%s,%s,%s)", (now(), usr, actn, ref))
+    conn.execute("INSERT INTO SYS_AUDIT (TS, USR, ACTN, REF) VALUES (%s,%s,%s,%s)", (now(), effective_actor(usr), actn, ref))

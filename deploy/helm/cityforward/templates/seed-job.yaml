@@ -16,6 +16,13 @@ spec:
       labels: {{- include "cf.selector" (dict "name" "meditrack-seed" "root" .) | nindent 8 }}
     spec:
       restartPolicy: OnFailure
+      {{- if eq .Values.meditrack.persistence.accessMode "ReadWriteOnce" }}
+      affinity:      # the data volume is a single-node disk: run beside the MediTrack pod that already has it attached
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector: {matchLabels: {app.kubernetes.io/name: meditrack}}
+      {{- end }}
       serviceAccountName: meditrack
       automountServiceAccountToken: false
       securityContext: {{- include "cf.podSecurity" . | nindent 8 }}
@@ -26,6 +33,7 @@ spec:
           env:
             - {name: APP_ROLE, value: seed}
             - {name: MEDITRACK_DB_URL, valueFrom: {secretKeyRef: {name: {{ .Values.externalDatabase.secretName }}, key: meditrack-url}}}
+            - {name: SEED_FORCE, value: {{ ternary "1" "0" .Values.meditrack.seedForce | quote }}}
             - {name: MEDITRACK_DOCS_DIR, value: /data/documents}
             - {name: MEDITRACK_HOTFOLDER, value: /data/import_hotfolder}
             - {name: AI_BACKEND_JWKS_FILE, value: /jwks/ai-backend.jwks.json}

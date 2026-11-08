@@ -1,4 +1,5 @@
-"""Seed MediTrack unless it already has data (first start). `--force` reseeds (demo reset)."""
+"""Seed MediTrack unless it already has data (first start). `--force` (or SEED_FORCE=1) reseeds (demo reset)."""
+import os
 import sys
 import time
 
@@ -28,7 +29,7 @@ def wait_for_db(seconds: int = 60) -> None:
 
 if __name__ == "__main__":
     wait_for_db()
-    if "--force" in sys.argv or not has_data():
+    if "--force" in sys.argv or os.getenv("SEED_FORCE") == "1" or not has_data():
         seed()
     else:
         print("MediTrack already has data - keeping it (use --force to reseed)")

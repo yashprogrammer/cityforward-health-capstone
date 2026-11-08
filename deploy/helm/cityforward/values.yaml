@@ -1,6 +1,6 @@
 # Defaults are the secure, production-shaped choice; values-kind.yaml relaxes only what a laptop needs.
 global:
-  environment: dev
+  environment: deployment
   imagePullPolicy: IfNotPresent
 
 images:
@@ -25,7 +25,11 @@ externalDatabase:
   secretName: cityforward-db     # keys: meditrack-url, copilot-url (and, for in-cluster Postgres, the generated role passwords)
 
 meditrack:
+  auth:
+    environment: deployment
+    mode: oidc
   replicas: 1                    # the legacy EHR is a single instance by design
+  seedForce: false               # true = the next install/upgrade wipes MediTrack and reloads the synthetic data (demo reset)
   publicBaseUrl: ""              # what browsers use (token audience). Empty = derived from ingress.host
   persistence: {size: 2Gi, storageClass: "", accessMode: ReadWriteOnce}     # documents + import hot folder (Azure Files, ReadWriteMany, in AKS)
   resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 512Mi}}
@@ -41,10 +45,13 @@ copilot:
   jwksConfigMap: cityforward-ai-jwks           # the PUBLIC key set, handed to the hospital's seed job
   webhookSecret: cityforward-webhook           # key: secret
   embedder: hash                               # hash | fastembed (image built with FASTEMBED=1)
+  dailyBudgetUsd: 0                            # circuit breaker; 0 preserves the production default (disabled)
   llm:
     provider: groq                             # groq | foundry | offline
     model: openai/gpt-oss-20b
     baseUrl: ""
+    baseUrlSecretKey: ""                       # optional key in secretName; keeps endpoints out of Helm values
+    maxOutputTokens: 0                         # 0 preserves the provider default; set a bound for paid development
     secretName: cityforward-llm                # keys: api-key  (optional: absent = offline template mode)
   keycloak: {issuer: "", internalUrl: "", audience: cityforward-ai}
   otel: {endpoint: ""}                         # e.g. http://otel-collector.observability:4318
@@ -65,6 +72,7 @@ keyVault:
     - {name: copilot-webhook-secret, secret: cityforward-webhook, key: secret}
     - {name: payer-api-key, secret: cityforward-payer, key: api-key}
     - {name: llm-api-key, secret: cityforward-llm, key: api-key}
+    - {name: llm-base-url, secret: cityforward-llm, key: base-url}     # only read when copilot.llm.baseUrlSecretKey is set
     - {name: ai-backend-key, secret: cityforward-ai-keys, key: ai-backend.pem}
     - {name: meditrack-signing-key, secret: cityforward-meditrack-signing, key: pem}
 

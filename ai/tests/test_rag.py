@@ -139,3 +139,53 @@ def test_llm_calls_are_metered_without_storing_prompts(rt, clean_db, hale):
     with db.session() as c:
         row = c.execute("SELECT * FROM llm_call").fetchone()
     assert row["purpose"] == "ask" and row["tokens_in"] > 0 and row["status"] == "ok" and "text" not in row and "prompt" not in row
+
+
+def test_question_names_the_record_types_to_search_first():
+    assert rag.kinds_for("What medications is the patient on and since when?") == ["medication"]
+    assert rag.kinds_for("Is every pending result accounted for?") == ["lab"]
+    assert rag.kinds_for("Were there any procedures this stay?") == ["procedure"]
+    assert rag.kinds_for("What did the latest note say about the plan?") == []
+
+
+def test_medication_question_retrieves_medication_records_before_notes(rt, clean_db, hale):
+    rag.index_chart(load_chart(rt.fhir, hale))
+    hits = rag.search_for_question(hale, "What medications is the patient on and since when?", k=8, principal=SYSTEM)
+    assert hits and hits[0].kind == "medication"
+    assert len({h.id for h in hits}) == len(hits)
+
+
+def test_model_sees_the_recorded_date_and_is_told_not_to_calculate(rt, clean_db, hale):
+    rag.index_chart(load_chart(rt.fhir, hale))
+    gw, llm = _gw({"answer": "x", "citations": [], "insufficient_evidence": True})
+    ask_mod.ask(gw, hale, "What medications is the patient on and since when?", principal=SYSTEM)
+    system, user = llm.prompts[0]
+    assert "Never calculate" in system
+    assert "[recorded 2026-10-17]" in user
+
+
+def test_question_wording_is_expanded_to_the_chart_spelling():
+    """The chart says "Natriuretic peptide", "hemoglobin A1c", "smoking": questions say NT-proBNP, A1c, smoker. Short keys match whole words only ("last" is not "AST")."""
+    assert "natriuretic peptide" in rag.expand_query("What is the NT-proBNP trend?")
+    assert "hemoglobin A1c" in rag.expand_query("latest A1c")
+    assert "smoking" in rag.expand_query("Is she a smoker?")
+    assert "high blood pressure" in rag.expand_query("Does she have hypertension?")
+    assert "flagged" in rag.expand_query("Are any labs abnormal?")
+    assert "aspartate" not in rag.expand_query("What was the last blood pressure?")
+
+
+def test_questions_route_to_record_types():
+    assert "lab" in rag.kinds_for("What is the NT-proBNP trend?")
+    assert rag.kinds_for("Who wrote the latest progress note?") == []   # handled by the recency rule in search_for_question
+    assert "note" in rag.kinds_for("Is the patient a smoker?")
+    assert "medication" in rag.kinds_for("What medications is she on?")
+
+
+def test_a_question_naming_another_patient_is_not_answered_from_this_chart():
+    rows = [("7", ["Valencia Hattie Hettinger", "Valencia", "Hettinger"]), ("11", ["Celina Taunya Jerde", "Celina", "Jerde"])]
+    assert ask_mod.other_patient_named("What medications is Celina Taunya Jerde on?", "7", rows)
+    assert ask_mod.other_patient_named("what meds is celina taunya jerde on", "7", rows)
+    assert ask_mod.other_patient_named("What medications is Celina Jerde on?", "7", rows)             # no middle name
+    assert not ask_mod.other_patient_named("What medications is Valencia Hettinger on?", "7", rows)
+    assert not ask_mod.other_patient_named("What did Dr. Jerde write?", "7", rows)                 # one shared word is not a person
+    assert not ask_mod.other_patient_named("What medications is she on?", "7", rows)

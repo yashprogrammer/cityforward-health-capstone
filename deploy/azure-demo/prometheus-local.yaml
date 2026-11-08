@@ -1,0 +1,26 @@
+grafana: {enabled: false}
+alertmanager: {enabled: false}
+defaultRules: {create: false}
+kubeStateMetrics: {enabled: false}
+nodeExporter: {enabled: false}
+kubeApiServer: {enabled: false}
+kubelet: {enabled: false}
+kubeControllerManager: {enabled: false}
+coreDns: {enabled: false}
+kubeEtcd: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+prometheusOperator:
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {cpu: 250m, memory: 256Mi}}
+prometheus:
+  prometheusSpec:
+    replicas: 1
+    retention: 6h
+    scrapeInterval: 5s
+    evaluationInterval: 5s
+    resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
+    additionalScrapeConfigs:
+      - job_name: copilot-metrics
+        static_configs: [{targets: ["copilot-metrics.cityforward:9100"]}]
+      - job_name: otel-spanmetrics
+        static_configs: [{targets: ["otel-collector.observability:8889"]}]

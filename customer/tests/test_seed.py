@@ -71,3 +71,10 @@ def test_ids_are_stable_between_seeds(seeded):
     # beds and numbering must not depend on Python's per-process hash seed
     with connect_once() as c:
         assert c.execute("SELECT BED_NO FROM IP_ADM_DTL WHERE IP_NO='IP2610-0204'").fetchone()["BED_NO"] == "09"
+
+
+def test_every_current_admission_shows_a_diagnosis(db):
+    bare = [r["IP_NO"] for r in db.execute(
+        """SELECT a.IP_NO FROM IP_ADM_DTL a WHERE a.STS IN ('ADM','DA') AND a.ADM_RSN NOT ILIKE 'Patient transfer%%'
+           AND NOT EXISTS (SELECT 1 FROM IP_DIAG_DTL d WHERE d.IP_NO = a.IP_NO)""").fetchall()]
+    assert not bare, f"admissions with an empty Diagnosis tab: {bare}"

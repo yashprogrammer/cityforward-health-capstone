@@ -88,3 +88,8 @@ details summary { cursor: pointer; color: var(--muted); font-size: .85rem; margi
 .ag small { grid-column: 2; color: var(--muted); } .ag .err { color: var(--bad); }
 .ag.ok { border-left-color: var(--ok); } .ag.degraded { border-left-color: var(--warn); } .ag.failed { border-left-color: var(--bad); background: var(--bad-bg); }
 @media (max-width: 900px) { .ag { grid-template-columns: 1fr; } .ag small { grid-column: 1; } }
+
+.inline-form { display: grid; gap: .5rem; margin-top: .4rem; } .inline-form label { display: grid; gap: .2rem; font-size: .9rem; }
+.inline-form input { padding: .45rem .6rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; }
+
+.final-note { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok); border-radius: 10px; padding: .6rem .8rem; margin: .5rem 0; display: grid; gap: .25rem; } .final-note code { margin-right: .4rem; }

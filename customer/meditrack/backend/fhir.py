@@ -554,6 +554,9 @@ async def create_documentreference(request: Request):
     doc_type = ((body.get("type") or {}).get("coding") or [{}])[0].get("code") or (body.get("type") or {}).get("text")
     if not (patient_ref and enc_ref and doc_type and att.get("data")):
         raise FhirError(400, "required", "subject, context.encounter, type and content[0].attachment.data are required")
+    if (os.getenv('AUTH_MODE', 'oidc') in {'local', 'oidc'} and claims.get('token_use') == 'access'
+            and str(claims.get('encounter')) != enc_ref):
+        raise FhirError(403, 'forbidden', 'staff token is limited to its launch encounter')
     if att.get("contentType") != "application/pdf":
         raise FhirError(422, "not-supported", "only application/pdf attachments are accepted")
     doc_type = re.sub(r"[^A-Z_]", "", doc_type.upper().replace("-", "_"))

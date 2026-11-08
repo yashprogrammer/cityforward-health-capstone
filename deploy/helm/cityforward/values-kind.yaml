@@ -1,4 +1,5 @@
 # kind on a laptop: images are loaded with `kind load docker-image`, one replica each, offline AI unless you create the llm secret.
+global: {environment: local}
 images:
   customer: {repository: cityforward-customer, tag: dev}
   ai: {repository: cityforward-ai, tag: dev}
@@ -7,6 +8,7 @@ copilot:
   hpa: {enabled: false}
   llm: {provider: offline}
 meditrack:
+  auth: {environment: local, mode: local}
   publicBaseUrl: http://localhost:8081
 ingress:
   host: ""

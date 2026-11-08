@@ -119,19 +119,34 @@ def test_terraform_is_formatted_and_parses():
         assert r.returncode == 0, r.stdout
 
 
+def var_default(name: str) -> str:
+    """The default of a Terraform variable, as written. The hospital posture lives in the defaults; deploy/azure-demo/demo.tfvars overrides it."""
+    return re.search(rf'variable "{name}" \{{[^}}]*?default\s*=\s*(\S+)', tf_text(), flags=re.S).group(1)
+
+
+def resolved(expr: str) -> str:
+    """A literal, or the default of the variable it references."""
+    ref = re.fullmatch(r"var\.(\w+)", expr)
+    return var_default(ref.group(1)) if ref else expr
+
+
 def test_terraform_security_properties():
     t = tf_text()
-    # everything that stores PHI is private-endpoint only
+    # everything that stores PHI is private-endpoint only BY DEFAULT
     for res in ("azurerm_postgresql_flexible_server", "azurerm_key_vault", "azurerm_container_registry", "azurerm_storage_account"):
         block = re.search(rf'resource "{res}" "\w+" \{{(.*?)\n\}}\n', t, flags=re.S).group(1)
-        assert "public_network_access_enabled" in block and "= false" in re.search(r"public_network_access_enabled\s*=\s*(\w+)", block).group(0), res
-    assert re.search(r"purge_protection_enabled\s*=\s*true", t) and re.search(r"enable_rbac_authorization\s*=\s*true", t)
+        expr = re.search(r"public_network_access_enabled\s*=\s*(\S+)", block).group(1)
+        assert resolved(expr) == "false", res
+    assert resolved(re.search(r"purge_protection_enabled\s*=\s*(\S+)", t).group(1)) == "true" and re.search(r"rbac_authorization_enabled\s*=\s*true", t)
+    assert resolved(re.search(r"geo_redundant_backup_enabled\s*=\s*(\S+)", t).group(1)) == "true"
+    assert var_default("enable_defender") == "true" and var_default("enable_azure_policy") == "true" and var_default("acr_sku") == '"Premium"'
+    assert var_default("aks_sku_tier") == '"Standard"' and var_default("enable_files_storage") == "true" and var_default("postgres_ha") == "true"
     assert re.search(r'variable "private_cluster"[^}]*default\s*=\s*true', t, flags=re.S)
     def has(pattern):
         return re.search(pattern, t) is not None
     assert has(r"local_account_disabled\s*=\s*true") and has(r"azure_rbac_enabled\s*=\s*true")
     assert has(r'network_policy\s*=\s*"cilium"') and has(r"oidc_issuer_enabled\s*=\s*true")
-    assert "require_secure_transport" in t and has(r"geo_redundant_backup_enabled\s*=\s*true") and has(r'min_tls_version\s*=\s*"TLS1_2"')
+    assert "require_secure_transport" in t and has(r'min_tls_version\s*=\s*"TLS1_2"')
     assert "infrastructure_encryption_enabled" in t
     # no literal credentials: passwords are generated and stored in Key Vault
     assert not re.search(r'(password|secret)\s*=\s*"[^"$]+"', t, flags=re.I)

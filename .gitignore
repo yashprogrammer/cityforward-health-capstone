@@ -13,6 +13,15 @@ ai/data/
 .terraform/
 *.tfstate
 *.tfstate.backup
+*.tfvars
+*.tfvars.json
+*.tfplan
+*.tfstate.*
+kubeconfig
+kubeconfig.*
 .azure/
 .data/
 linkerd-certs/
+
+# The demo cost/posture profile holds no identifiers (ids and IPs are generated into .data/ by demo.sh)
+!deploy/azure-demo/demo.tfvars

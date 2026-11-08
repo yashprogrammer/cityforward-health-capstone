@@ -7,7 +7,7 @@ COPY ai/dashboard ./
 RUN npm run build
 
 FROM python:3.13-slim
-ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PYTHONUNBUFFERED=1 PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=10 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /app
 COPY ai/requirements.txt .
 RUN pip install -r requirements.txt && useradd --uid 10001 --create-home app

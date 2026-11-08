@@ -4,6 +4,7 @@ Why hybrid: embeddings find "heart attack" when the note says "STEMI"; full-text
 Reciprocal Rank Fusion needs no score calibration: score = sum over rankers of 1 / (60 + rank).
 """
 import hashlib
+import re
 from dataclasses import dataclass
 
 from .chart import Chart
@@ -65,13 +66,24 @@ SYNONYMS = [
     ("anticoagulant", "heparin warfarin apixaban rivaroxaban enoxaparin"), ("shortness of breath", "dyspnea SOB"), ("dyspnea", "shortness of breath SOB"),
     ("high blood pressure", "hypertension HTN"), ("diabetes", "DM A1c glucose"), ("kidney", "renal creatinine eGFR"), ("antibiotic", "azithromycin ceftriaxone vancomycin"),
     ("allerg", "allergy allergies reaction"), ("walk", "ambulate ambulation gait"), ("stairs", "stair steps floor"), ("lung function", "FEV1 spirometry"),
-    ("cholesterol", "LDL lipid statin"), ("smok", "tobacco nicotine pack-years"), ("vaccin", "immunization pneumococcal influenza"), ("transfus", "packed red cells blood unit"),
+    ("cholesterol", "LDL lipid statin"), ("smok", "smoking smoke smoker tobacco nicotine pack-years"), ("vaccin", "immunization pneumococcal influenza"), ("transfus", "packed red cells blood unit"),
+    # lab abbreviations: the chart spells the test out, clinicians (and questions) abbreviate it
+    ("nt-probnp", "natriuretic peptide prohormone N-Terminal BNP"), ("probnp", "natriuretic peptide prohormone N-Terminal BNP"), ("bnp", "natriuretic peptide"),
+    ("hba1c", "hemoglobin A1c"), ("a1c", "hemoglobin A1c"), ("egfr", "glomerular filtration rate"), ("bun", "urea nitrogen"), ("wbc", "leukocytes white blood cell"),
+    ("hgb", "hemoglobin"), ("ldl", "cholesterol in LDL"), ("hdl", "cholesterol in HDL"), ("tsh", "thyrotropin"), ("alt", "alanine aminotransferase"),
+    ("ast", "aspartate aminotransferase"), ("bmi", "body mass index"), ("co2", "carbon dioxide"), ("hypertension", "high blood pressure HTN"),
+    ("statin", "simvastatin atorvastatin rosuvastatin pravastatin"), ("abnormal", "flagged H L"), ("out of range", "flagged H L"), ("elevated", "flagged H"),
 ]
+
+
+def _mentions(low: str, key: str) -> bool:
+    """Longer keys match as a word prefix ("allerg" finds "allergies"); three letters or fewer only as a whole word, or "ast" would fire on "last"."""
+    return re.search(r"\b" + re.escape(key) + (r"\b" if len(key) <= 3 else ""), low) is not None
 
 
 def expand_query(q: str) -> str:
     low = q.lower()
-    extra = [terms for key, terms in SYNONYMS if key in low]
+    extra = [terms for key, terms in SYNONYMS if _mentions(low, key)]
     return q + (" " + " ".join(extra) if extra else "")
 
 
@@ -96,6 +108,49 @@ def search(patient_id: str, query: str, k: int = 8, principal=None, kinds: list[
         got = {r["id"]: r for r in c.execute("SELECT id, source_ref, kind, text, effective, encounter_id FROM chunk WHERE id = ANY(%s)", (top,))}
     return [Hit(id=i, source_ref=got[i]["source_ref"], kind=got[i]["kind"], text=got[i]["text"],
                 effective=got[i]["effective"].isoformat() if got[i]["effective"] else None, encounter_id=got[i]["encounter_id"], score=scores[i]) for i in top]
+
+
+# Notes are long and mention everything, so for "what medications...", "any pending results?" or "what procedures..." they outrank the short structured records that actually
+# answer the question. When the question names a record type, search those records first, then let the general search fill the remaining slots.
+KIND_HINTS = [
+    (re.compile(r"\b(medic\w*|drugs?|doses?|dosing|prescri\w*|taking|pharmac\w*|antibiotics?|anticoag\w*|antiplatelet|blood thinners?)\b"), "medication"),
+    (re.compile(r"\b(labs?|laboratory|results?|pending|creatinine|troponin|a1c|hba1c|hemoglobin|potassium|sodium|inr|bnp|nt-probnp|natriuretic|egfr|bun|wbc|ldl|hdl|glucose|tsh|abnormal|out of range)\b"), "lab"),
+    (re.compile(r"\b(vitals?|blood pressure|bp|heart rate|pulse|temperature|oxygen|spo2|sats?)\b"), "vital"),
+    (re.compile(r"\b(procedures?|surger\w*|operations?|cath\w*|biops\w*)\b"), "procedure"),
+    (re.compile(r"\b(diagnos\w*|conditions?|problems?|comorbid\w*)\b"), "diagnosis"),
+    (re.compile(r"\b(smok\w*|tobacco|alcohol|social history|allerg\w*)\b"), "note"),
+]
+ROUTED_PRIMARY = 8
+LIST_KINDS = {"medication", "diagnosis", "procedure"}      # "what medications...?" wants every one, not the best eight
+LIST_PRIMARY = 24
+RECENT = re.compile(r"\b(latest|most recent|recent|recently|last|newest)\b")
+NOTE_WORDS = re.compile(r"\b(notes?|wrote|written|author)\b")
+
+
+def kinds_for(question: str) -> list[str]:
+    low = question.lower()
+    return [kind for rx, kind in KIND_HINTS if rx.search(low)]
+
+
+def search_for_question(patient_id: str, question: str, k: int = 8, principal=None) -> list[Hit]:
+    """`search`, with the record types the question asks about ranked first. Still one patient, still row-level security.
+    "Latest" questions put the newest records first; list questions get a longer list; identical passages (a drug charted six times) count once."""
+    kinds = kinds_for(question)
+    recent = RECENT.search(question.lower()) is not None
+    if recent and not kinds and NOTE_WORDS.search(question.lower()):
+        kinds = ["note"]                    # "who wrote the latest note": the newest notes, not the best word match
+    primary_k = LIST_PRIMARY if LIST_KINDS & set(kinds) else ROUTED_PRIMARY
+    primary = search(patient_id, question, k=max(primary_k, 24) if recent else primary_k, principal=principal, kinds=kinds) if kinds else []
+    if recent and primary:
+        primary = sorted(primary, key=lambda h: h.effective or "", reverse=True)[:primary_k]
+    seen = {h.id for h in primary}
+    merged = primary + [h for h in search(patient_id, question, k=k, principal=principal) if h.id not in seen]
+    texts, out = set(), []
+    for h in merged:
+        if h.text not in texts:
+            texts.add(h.text)
+            out.append(h)
+    return out
 
 
 def _or_query(q: str) -> str:

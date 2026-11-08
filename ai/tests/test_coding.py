@@ -116,6 +116,21 @@ def test_cannot_finalize_a_conflicting_code_set(api, rt, meditrack):
     assert r.status_code == 409 and "Excludes1" in r.json()["detail"]
 
 
+def test_a_coder_can_revise_a_decision_to_clear_a_conflict(api, rt, meditrack):
+    pid = pid_of(rt, WHITAKER)
+    coder = bearer(user_token(meditrack, WHITAKER, user="him.patel")["access_token"])
+    runtime.gateway = Gateway(CodingFake(PLAN_COPD))
+    ws = api.post(f"/api/patients/{pid}/coding", headers=coder).json()
+    for i in ws["items"]:
+        api.post(f"/api/coding/{ws['id']}/items/{i['id']}", headers=coder, json={"action": "accept"})
+    pr = next(i["id"] for i in ws["items"] if i["code"] == "J44.1")
+    assert api.post(f"/api/coding/{ws['id']}/finalize", headers=coder, json={"principal_item": pr}).status_code == 409
+    sym = next(i["id"] for i in ws["items"] if i["code"] == "R09.02")
+    r = api.post(f"/api/coding/{ws['id']}/items/{sym}", headers=coder, json={"action": "reject", "reason": "integral to J96.01 (Excludes1)"})
+    assert r.status_code == 200 and r.json()["history"][-1]["what"].endswith("(was accepted)")
+    assert api.post(f"/api/coding/{ws['id']}/finalize", headers=coder, json={"principal_item": pr}).status_code == 200
+
+
 def test_modify_validates_the_new_code(api, rt, meditrack):
     pid = pid_of(rt, WHITAKER)
     coder = bearer(user_token(meditrack, WHITAKER, user="him.patel")["access_token"])

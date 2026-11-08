@@ -30,18 +30,19 @@ export default function Overview({ data, patient, setWhy }) {
   const show = (id) => { const s = res.sources[id]; setWhy({ title: `Source ${id}`, sources: [{ ref: s.ref, label: s.kind, text: s.text }] }) }
   const sum = res?.summary
   const stmt = (f, i) => <li key={i}>{f.text} {f.sources.map((s) => <Chip key={s} id={s} onClick={() => show(s)} />)}</li>
+  const provisional = data.flags.filter((f) => f.id.startsWith('provisional-dx:'))
+  const otherFlags = data.flags.filter((f) => !f.id.startsWith('provisional-dx:'))
+  const flag = (f) => <button key={f.id} className={`flag ${f.level}`} onClick={() => setWhy({ title: f.title, rule: f.rule, next: f.next_step, sources: f.evidence.map((e) => ({ ref: e.ref, text: e.text })) })}>
+    <span className="dot" aria-hidden="true" /><span><b>{f.title}</b><small>{f.rule}</small></span><span className="why-link">Why?</span>
+  </button>
   return (
     <>
       <section aria-labelledby="flags-h">
         <h2 id="flags-h">Needs attention <span className="muted">· rule-based, not predictions</span></h2>
         {data.flags.length === 0 && <p className="muted">No documentation gaps found by the rules.</p>}
         <div className="flags">
-          {data.flags.map((f) => (
-            <button key={f.id} className={`flag ${f.level}`} onClick={() => setWhy({ title: f.title, rule: f.rule, next: f.next_step, sources: f.evidence.map((e) => ({ ref: e.ref, text: e.text })) })}>
-              <span className="dot" aria-hidden="true" />
-              <span><b>{f.title}</b><small>{f.rule}</small></span>
-              <span className="why-link">Why?</span>
-            </button>))}
+          {otherFlags.map(flag)}
+          {provisional.length > 0 && <details className="card"><summary>Provisional diagnoses to review ({provisional.length})</summary><p className="muted">These statuses come from the EHR and may include carried-forward demo data. Review the source with the treating clinician; the current demo does not provide a diagnosis-confirmation control. Grouping does not change the chart.</p><div className="flags">{provisional.map(flag)}</div></details>}
         </div>
       </section>
 

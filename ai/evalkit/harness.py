@@ -32,6 +32,8 @@ def configure_env(workdir: Path | None = None) -> None:
 @contextmanager
 def meditrack_stack(seed: bool = True):
     """Yields the in-process MediTrack TestClient, with our backend client registered (`.pem` holds the private key)."""
+    if seed and (os.getenv('CITYFORWARD_DISPOSABLE_TEST_DB') != '1' or not os.getenv('MEDITRACK_DB_URL')):
+        raise RuntimeError('This harness reseeds MediTrack. Explicitly set MEDITRACK_DB_URL to a disposable database and CITYFORWARD_DISPOSABLE_TEST_DB=1.')
     configure_env()
     import jwt
     from cryptography.hazmat.primitives import serialization

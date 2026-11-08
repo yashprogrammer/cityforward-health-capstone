@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 # USD per 1M tokens (input, output). Illustrative list prices for budgeting exercises: check the provider's current price sheet.
-PRICES = {"openai/gpt-oss-20b": (0.075, 0.30), "gpt-oss-20b": (0.075, 0.30), "openai/gpt-oss-120b": (0.15, 0.60), "default": (0.50, 1.50)}
+PRICES = {"openai/gpt-oss-20b": (0.075, 0.30), "gpt-oss-20b": (0.075, 0.30), "openai/gpt-oss-120b": (0.15, 0.60), "gpt-oss-120b": (0.15, 0.60), "default": (0.50, 1.50)}
+# Foundry gpt-oss-120b Global Standard verified against Azure Retail Prices on 2026-10-26.
 
 
 class LLMError(RuntimeError):
@@ -66,20 +67,36 @@ def extract_json(text: str) -> dict:
 
 
 class OpenAICompatible:
-    def __init__(self, name: str, base_url: str, api_key: str, model: str, timeout: float = 60):
+    def __init__(self, name: str, base_url: str, api_key, model: str, timeout: float = 60, *, max_retries: int = 1, max_output_tokens: int | None = None):
         from langchain_openai import ChatOpenAI   # lazy: offline mode and tests need no model client
         self.name = f"{name}:{model}"
         self.model = model
         self.base_url, self.api_key = base_url, api_key
         self.in_boundary = os.getenv("LLM_IN_BOUNDARY", "") == "1"      # the model runs inside the hospital boundary (vLLM in the VNet), so de-identification is optional
-        self._chat = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0, timeout=timeout, max_retries=1)
+        limit = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "0")) if max_output_tokens is None else max_output_tokens
+        if limit < 0:
+            raise ValueError("LLM_MAX_OUTPUT_TOKENS must be nonnegative")
+        options = {"max_tokens": limit} if limit else {}
+        effort = os.getenv("LLM_REASONING_EFFORT", "")      # gpt-oss thinks before it answers: low | medium | high
+        if effort:
+            options["model_kwargs"] = {"reasoning_effort": effort}
+        self.max_output_tokens = limit
+        self._chat = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0, timeout=timeout, max_retries=max_retries, **options)
 
     def chat(self, system: str, user: str) -> Reply:
         try:
             r = self._chat.invoke([("system", system), ("user", user)])
         except Exception as e:   # noqa: BLE001 - network, auth, rate limit: the caller decides what to do
-            raise LLMError(f"{type(e).__name__}: {e}") from e
+            body = getattr(e, "body", None)
+            code = str(body.get("code", "")) if isinstance(body, dict) else ""
+            if "content_filter" in code or "ResponsibleAIPolicyViolation" in str(e):
+                raise LLMError("the model provider's content filter blocked this request") from e
+            detail = (body.get("message") if isinstance(body, dict) else None) or e
+            raise LLMError(f"{type(e).__name__}: {detail}") from e
         u = getattr(r, "usage_metadata", None) or {}
+        if (getattr(r, "response_metadata", None) or {}).get("finish_reason") == "length" and not str(r.content).strip():
+            # a reasoning model spends the same token budget on thinking and on the answer: a cap that is too low leaves no answer at all
+            raise LLMError(f"the model used all {self.max_output_tokens or 'its default'} output tokens on reasoning and wrote no answer: raise LLM_MAX_OUTPUT_TOKENS or lower LLM_REASONING_EFFORT")
         return Reply(r.content if isinstance(r.content, str) else str(r.content), u.get("input_tokens", 0), u.get("output_tokens", 0))
 
 
@@ -114,8 +131,11 @@ def _get_backend(provider: str | None = None) -> Backend | None:
         return OpenAICompatible("groq", os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1"), key, os.getenv("LLM_MODEL", "openai/gpt-oss-20b"))
     if provider == "foundry":
         base, key = os.getenv("LLM_BASE_URL"), os.getenv("LLM_API_KEY")
+        if os.getenv("FOUNDRY_AUTH") == "managed_identity":
+            from azure.identity import ManagedIdentityCredential, get_bearer_token_provider
+            key = get_bearer_token_provider(ManagedIdentityCredential(), "https://ai.azure.com/.default")
         if not (base and key):
-            raise LLMError("foundry needs LLM_BASE_URL and LLM_API_KEY")
+            raise LLMError("foundry needs LLM_BASE_URL and a key or managed identity")
         return OpenAICompatible("foundry", base, key, os.getenv("LLM_MODEL", "gpt-oss-20b"))
     if provider == "offline":
         return None

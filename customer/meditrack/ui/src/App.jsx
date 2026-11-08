@@ -2,11 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 const api = async (path, opts) => {
   const r = await fetch(path, opts)
+  if (r.status === 401 && path.startsWith('/int/')) window.dispatchEvent(new Event('meditrack-session-expired'))
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `ERROR ${r.status}`)
   return r.json()
 }
-const post = (path, body) =>
-  api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+const post = (path, body) => {
+  const csrf = (document.cookie.match(/(?:^|; )mt_csrf=([^;]*)/) || [])[1]
+  return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {}) }, body: body ? JSON.stringify(body) : undefined })
+}
 
 // MediTrack stores dates as 'YYYY-MM-DD HH:MM' text; US screens show MM/DD/YYYY
 const fd = (s) => (s ? s.replace(/^(\d{4})-(\d{2})-(\d{2})/, '$2/$3/$1') : '')
@@ -86,7 +89,7 @@ function Discharged() {
 // ------------------------------------------------------------------ Patient file
 const TABS = ['Diagnosis', 'Procedures', 'Lab Results', 'Pharmacy', 'Clinical Notes', 'Documents', 'Discharge Summary', 'Payer Auth', 'Visit History']
 
-function Patient({ ip }) {
+function Patient({ ip, session }) {
   const [d, err, reload] = useLoad(() => api(`/int/ip/${ip}`), [ip])
   const [tab, setTab] = useState('Diagnosis')
   const [msg, setMsg] = useState('')
@@ -108,6 +111,8 @@ function Patient({ ip }) {
     if (disp) act(`/int/ip/${ip}/discharge`, 'Confirm FINAL DISCHARGE (bill settled)?', { disposition: disp.toUpperCase() })
   }
   const inpatient = a.ENC_CLS === 'IMP'
+  const canSign = session?.role === 'ATTENDING'
+  const canAdvise = ['ATTENDING', 'NURSE'].includes(session?.role)
   return (
     <>
       <fieldset>
@@ -124,8 +129,8 @@ function Patient({ ip }) {
         <div><b>Reason for visit:</b> {a.ADM_RSN}</div>
         {inpatient && (
           <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button className="primary" disabled={a.STS !== 'ADM'} onClick={() => act(`/int/ip/${ip}/discharge-advise`, 'Mark patient as DISCHARGE ADVISED?')}>Discharge Advised</button>
-            <button disabled={a.STS !== 'DA'} onClick={discharge}>Final Discharge</button>
+            <button className="primary" disabled={a.STS !== 'ADM' || !canAdvise} title={!canAdvise ? 'An attending or nurse can advise discharge' : undefined} onClick={() => act(`/int/ip/${ip}/discharge-advise`, 'Mark patient as DISCHARGE ADVISED?')}>Discharge Advised</button>
+            <button disabled={a.STS !== 'DA' || !canSign} title={!canSign ? 'Only an attending can record final discharge' : undefined} onClick={discharge}>Final Discharge</button>
             <a className="btn" href={`/int/ip/${ip}/summary-template`}>Download DS Template (.doc)</a>
             <button onClick={() => window.print()}>Print</button>
             {msg && <span className="err">{msg}</span>}
@@ -150,9 +155,9 @@ function Patient({ ip }) {
         {tab === 'Pharmacy' && <Grid rows={d.meds} cols={[['ISS_TYP', 'List'], ['DRUG_NM', 'Drug'], ['DOSE', 'Dose'], ['FREQ', 'Frequency'], ['ROUTE', 'Route'], ['MED_STS', 'Status']]} />}
         {tab === 'Clinical Notes' && <Grid rows={d.notes.map((n) => ({ ...n, NOTE_DT: fd(n.NOTE_DT) }))} cols={[['NOTE_DT', 'Date/Time'], ['NOTE_TYP', 'Type'], ['AUTH', 'Author'], ['NOTE_TXT', 'Note']]} />}
         {tab === 'Documents' && <Documents ip={ip} docs={d.docs} reload={reload} />}
-        {tab === 'Discharge Summary' && <SummaryTab ip={ip} summary={d.summary} reload={reload} />}
+        {tab === 'Discharge Summary' && <SummaryTab ip={ip} summary={d.summary} reload={reload} canSave={canSign} />}
         {custom && <EmbeddedTab key={custom.LNK_ID} title={custom.LNK_LBL} src={custom.HREF} />}
-        {tab === 'Payer Auth' && <Grid rows={d.auths.map((x) => ({ ...x, SUBM_DT: fd(x.SUBM_DT), RESP_DT: fd(x.RESP_DT) }))} cols={[['SUBM_DT', 'Submitted'], ['AUTH_STS', 'Status'], ['QRY_RSN', 'Payer query'], ['RESP_DT', 'Responded']]} />}
+        {tab === 'Payer Auth' && <Grid rows={d.auths.map((x) => ({ ...x, SUBM_DT: fd(x.SUBM_DT), RESP_DT: fd(x.RESP_DT) }))} cols={[['SUBM_DT', 'Submitted'], ['AUTH_STS', 'Status'], ['QRY_RSN', 'Payer query'], ['RESP_DT', 'Responded']]} empty="No payer authorization yet. One is submitted and answered after discharge is advised, so it appears here once the stay has finished." />}
         {tab === 'Visit History' && <VisitHistory visits={d.visits} />}
       </div>
     </>
@@ -191,8 +196,8 @@ function EmbeddedTab({ title, src }) {
   return <iframe ref={ref} title={title} src={src} style={{ width: '100%', height, border: 0, display: 'block' }} />
 }
 
-function Grid({ rows, cols }) {
-  if (!rows?.length) return <div className="hint">No records found.</div>
+function Grid({ rows, cols, empty = 'No records found.' }) {
+  if (!rows?.length) return <div className="hint">{empty}</div>
   return (
     <table className="grid">
       <thead><tr>{cols.map(([, h]) => <th key={h}>{h}</th>)}</tr></thead>
@@ -231,7 +236,8 @@ function Documents({ ip, docs, reload }) {
     const fd_ = new FormData()
     fd_.append('doc_typ', typ)
     fd_.append('file', file)
-    try { await api(`/int/ip/${ip}/docs`, { method: 'POST', body: fd_ }); setMsg('Uploaded.'); reload() } catch (e) { setMsg(e.message) }
+    const csrf = (document.cookie.match(/(?:^|; )mt_csrf=([^;]*)/) || [])[1]
+    try { await api(`/int/ip/${ip}/docs`, { method: 'POST', body: fd_, headers: csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {} }); setMsg('Uploaded.'); reload() } catch (e) { setMsg(e.message) }
   }
   return (
     <>
@@ -259,9 +265,10 @@ function Documents({ ip, docs, reload }) {
   )
 }
 
-function SummaryTab({ ip, summary, reload }) {
+function SummaryTab({ ip, summary, reload, canSave }) {
   const [text, setText] = useState('')
-  const save = async () => { await post(`/int/ip/${ip}/manual-summary`, { text }); reload() }
+  const [error, setError] = useState('')
+  const save = async () => { try { setError(''); await post(`/int/ip/${ip}/manual-summary`, { text }); reload() } catch (e) { setError(e.message) } }
   if (summary) {
     return (
       <>
@@ -276,9 +283,11 @@ function SummaryTab({ ip, summary, reload }) {
         No discharge summary on file. Download the DS template (Form HIM-DS-07), then copy details from the
         Diagnosis, Procedures, Lab Results, Pharmacy and Clinical Notes screens.
       </div>
-      <textarea rows={16} value={text} onChange={(e) => setText(e.target.value)}
+      {!canSave && <div className="hint">Only an attending can save a discharge summary.</div>}
+      {error && <div className="err" role="alert">{error}</div>}
+      <textarea rows={16} value={text} disabled={!canSave} onChange={(e) => setText(e.target.value)}
         placeholder={'Diagnosis:\nPresenting complaints:\nHospital course:\nProcedures:\nInvestigations:\nCondition at discharge:\nDischarge medications:\nFollow-up:'} />
-      <div style={{ marginTop: 8 }}><button className="primary" onClick={save} disabled={!text.trim()}>Save Summary</button></div>
+      <div style={{ marginTop: 8 }}><button className="primary" onClick={save} disabled={!canSave || !text.trim()}>Save Summary</button></div>
     </>
   )
 }
@@ -382,35 +391,54 @@ function Webhooks() {
   )
 }
 
-// Demo only: MediTrack has no SSO, so the banner lets you choose who you are signed in as (stored in a cookie).
-function ActAs() {
-  const [users] = useLoad(() => api('/int/users'), [])
-  const cur = (document.cookie.match(/(?:^|; )mt_user=([^;]*)/) || [])[1] || 'res.etran'
-  const change = (e) => { document.cookie = `mt_user=${e.target.value}; path=/`; window.location.reload() }
-  return (
-    <span className="user">
-      <select value={cur} onChange={change} title="Demo: act as" style={{ fontSize: 12, padding: '2px 4px' }}>
-        {(users || [{ USR_ID: cur, USR_NM: cur }]).map((u) => <option key={u.USR_ID} value={u.USR_ID}>{u.USR_NM} ({u.ROLE_CD}{u.UNIT_CD !== 'ALL' ? ', ' + u.UNIT_CD : ''})</option>)}
-      </select>
-      {' '}&middot; {new Date().toLocaleDateString('en-US')}
-    </span>
-  )
+function Login() {
+  const [capabilities, capabilitiesError] = useLoad(() => api('/int/session/capabilities'), [])
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async (e) => {
+    e.preventDefault(); setError(''); setBusy(true)
+    try { await post('/auth/login', { username: username.trim(), password }); window.location.replace('/') }
+    catch (err) { setError(err.message); setPassword(''); setBusy(false) }
+  }
+  return <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#eef2f7' }}>
+    <form onSubmit={submit} style={{ background: 'white', padding: 32, borderRadius: 8, width: 'min(380px, 90vw)', boxShadow: '0 4px 20px #0002', display: 'grid', gap: 12 }}>
+      <h1 style={{ margin: 0 }}>MediTrack HMS</h1><p>CityForward Health · Staff sign in</p>
+      {capabilitiesError && <div className="err" role="alert">Staff sign-in is unavailable.</div>}
+      {capabilities?.auth_mode === 'oidc' ? <a className="btn primary" href="/auth/entra/start">Sign in with Microsoft</a> : capabilities?.auth_mode === 'local' ? <>
+      <label htmlFor="staff-id">Staff ID</label><input id="staff-id" autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required />
+      <label htmlFor="staff-password">Password</label><input id="staff-password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required />
+      {error && <div className="err" role="alert">{error}</div>}
+      <button className="primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+      <small>Local training system · synthetic patient data</small>
+      </> : null}
+    </form>
+  </main>
 }
 
 // ------------------------------------------------------------------ Shell
 export default function App() {
   const hash = useHash()
+  const [session, sessionError] = useLoad(() => api('/auth/session'), [])
+  const [expired, setExpired] = useState(false)
+  const [logoutError, setLogoutError] = useState('')
+  useEffect(() => { const on = () => setExpired(true); window.addEventListener('meditrack-session-expired', on); return () => window.removeEventListener('meditrack-session-expired', on) }, [])
+  const logout = async () => { try { await post('/auth/logout'); setExpired(true); window.location.replace('/') } catch (e) { setLogoutError(e.message) } }
   const ipMatch = hash.match(/^#\/ip\/(.+)$/)
   const nav = [
     ['In-Patient (IPD)', [['#/census', 'IPD Census'], ['#/discharged', 'Discharged Patients']]],
     ['Reports', [['#/mis', 'MIS: Discharge TAT']]],
-    ['System Admin', [['#/admin/links', 'External Links'], ['#/admin/webhooks', 'Event Webhooks'], ['#/audit', 'Audit Trail']]],
+    ...(session?.role === 'IT_ADMIN' ? [['System Admin', [['#/admin/links', 'External Links'], ['#/admin/webhooks', 'Event Webhooks'], ['#/audit', 'Audit Trail']]]] : []),
+    ...(session?.role === 'COMPLIANCE' ? [['System Admin', [['#/audit', 'Audit Trail']]]] : []),
   ]
+  if (expired || sessionError) return <Login />
+  if (!session) return <div>Checking your staff session…</div>
   return (
     <>
       <div className="banner">
         <span className="logo">MediTrack HMS<small>v3.4.0 &middot; CityForward Health, Columbus OH</small></span>
-        <ActAs />
+        <span className="user">{session.name} · {session.role} <button onClick={logout}>Log out</button>{logoutError && <span className="err">{logoutError}</span>}</span>
       </div>
       <div className="ticker">&#9888; Scheduled server maintenance: Sunday 02:00-04:00 AM. Please save your work. &middot; Lab results interface (HL7) delayed by 15 min on weekends. &middot; Contact IT ext. 2204 for password reset.</div>
       <div className="layout">
@@ -423,7 +451,7 @@ export default function App() {
           ))}
         </div>
         <div className="main">
-          {ipMatch ? <Patient ip={ipMatch[1]} key={ipMatch[1]} />
+          {ipMatch ? <Patient ip={ipMatch[1]} key={ipMatch[1]} session={session} />
             : hash === '#/discharged' ? <Discharged />
             : hash === '#/admin/links' ? <ExtLinks />
             : hash === '#/admin/webhooks' ? <Webhooks />

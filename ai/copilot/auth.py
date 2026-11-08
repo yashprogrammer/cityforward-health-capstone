@@ -2,6 +2,7 @@
 
 The token is the only identity the service trusts; patient and unit scope come from it, never from request parameters.
 """
+import re
 import time
 
 import httpx
@@ -44,7 +45,8 @@ class Issuer(BaseModel):
 
 
 def trusted_issuers() -> list[Issuer]:
-    out = [Issuer(name="meditrack", jwks_url=f"{settings().meditrack_base}/smart/jwks.json", kind="smart")]
+    out = [Issuer(name="meditrack", iss=settings().smart_issuer, audience=settings().smart_audience,
+                  jwks_url=f"{settings().meditrack_base}/smart/jwks.json", kind="smart")]
     if settings().keycloak_issuer:
         out.append(Issuer(name="keycloak", iss=settings().keycloak_issuer, jwks_url=f"{settings().keycloak_internal or settings().keycloak_issuer}/protocol/openid-connect/certs",
                           kind="keycloak", audience=settings().keycloak_audience))
@@ -85,8 +87,25 @@ class Verifier:
                 if key is None:
                     last = "unknown signing key"
                     continue
-                opts = {"require": ["exp", "sub"], "verify_aud": bool(iss.audience)}
-                claims = jwt.decode(token, key.key, algorithms=["RS256"], options=opts, **({"audience": iss.audience} if iss.audience else {}))
+                opts = {"require": ["exp", "sub"] + (["iss"] if iss.iss else []) + (["aud"] if iss.audience else []), "verify_aud": bool(iss.audience)}
+                claims = jwt.decode(token, key.key, algorithms=["RS256"], options=opts,
+                                    **({"audience": iss.audience} if iss.audience else {}), **({"issuer": iss.iss} if iss.iss else {}))
+                if settings().smart_session_required:
+                    reference = claims.get("staff_session")
+                    if iss.kind != "smart" or claims.get("token_use") != "access" or not isinstance(reference, str) or not re.fullmatch(r'[0-9a-f]{64}', reference):
+                        raise HTTPException(401, "session-bound SMART access token required")
+                    from .app import rt
+                    try:
+                        service_token = rt.get_fhir().token()
+                        result = self.http.get(f"{settings().meditrack_base}/smart/session-status/{claims['staff_session']}",
+                                               headers={"Authorization": f"Bearer {service_token}"}, timeout=5)
+                        result.raise_for_status()
+                        session = result.json()
+                    except Exception as e:
+                        raise HTTPException(503, "staff session verification unavailable") from e
+                    if (not session.get("active") or session.get("user") != claims.get("sub")
+                            or session.get("role") != claims.get("role") or session.get("unit") != claims.get("unit")):
+                        raise HTTPException(401, "staff session expired, revoked or changed")
                 return principal_from_keycloak(claims) if iss.kind == "keycloak" else principal_from_claims(claims)
             except jwt.PyJWTError as e:
                 last = f"invalid token: {e}"

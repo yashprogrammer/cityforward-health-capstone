@@ -139,6 +139,17 @@ def test_seed_job_registers_the_vendor_on_install(docs):
     assert env["APP_ROLE"] == "seed" and env["AI_BACKEND_JWKS_FILE"].endswith(".jwks.json") and env["AI_WEBHOOK_URL"].endswith("/webhooks/meditrack")
     assert env["AI_LAUNCH_URL"].endswith("/ai/launch")
     assert job["metadata"]["annotations"]["helm.sh/hook"] == "post-install,post-upgrade"
+    assert env["SEED_FORCE"] == "0"       # an upgrade never wipes the EHR unless asked
+
+
+def test_demo_tag_is_always_repulled():
+    pods = [d for d in render_azure_demo() if d["kind"] == "Deployment"]
+    assert pods and all(c["imagePullPolicy"] == "Always" for d in pods for c in d["spec"]["template"]["spec"]["containers"] if "cityforward-" in c["image"])
+
+
+def test_seed_force_is_opt_in():
+    job = kinds(render("values.yaml", "meditrack.seedForce=true"), "Job")[0]
+    assert {e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}["SEED_FORCE"] == "1"
 
 
 def test_key_vault_sync_covers_every_secret_the_workloads_reference():
@@ -165,3 +176,77 @@ def test_key_vault_sync_covers_every_secret_the_workloads_reference():
 def test_no_key_vault_objects_on_kind():
     docs = render("values-kind.yaml")
     assert not [d for d in docs if d["kind"] == "SecretProviderClass"]
+
+
+def test_foundry_development_budget_and_endpoint_are_wired():
+    docs = render("values-kind.yaml", "copilot.llm.provider=foundry", "copilot.llm.model=gpt-oss-120b", "copilot.llm.baseUrlSecretKey=base-url", "copilot.dailyBudgetUsd=0.25", "copilot.llm.maxOutputTokens=4096")
+    dep = next(d for d in kinds(docs, "Deployment") if d["metadata"]["name"] == "copilot")
+    env = {e["name"]: e for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["COPILOT_DAILY_BUDGET_USD"]["value"] == "0.25"
+    assert env["LLM_MAX_OUTPUT_TOKENS"]["value"] == "4096"
+    assert env["LLM_BASE_URL"]["valueFrom"]["secretKeyRef"] == {"name": "cityforward-llm", "key": "base-url"}
+    assert env["LLM_API_KEY"]["valueFrom"]["secretKeyRef"]["key"] == "api-key"
+
+
+# ------------------------------------------------------------------ Azure demo overlay (values-aks.yaml + values-azure-demo.yaml)
+def render_azure_demo() -> list[dict]:
+    args = ["template", "t", str(CHART), "-f", str(CHART / "values-aks.yaml"), "-f", str(CHART / "values-azure-demo.yaml"), "--namespace", "cityforward",
+            "--set", "images.customer.repository=x.azurecr.io/cf-customer", "--set", "images.ai.repository=x.azurecr.io/cf-ai",
+            "--set", "keyVault.name=kv-x", "--set", "keyVault.tenantId=t", "--set", "keyVault.workloadIdentityClientId=c", "--set", "meditrack.publicBaseUrl=http://203.0.113.7"]
+    return [d for d in yaml.safe_load_all(helm(*args)) if d]
+
+
+def test_azure_demo_overlay_keeps_the_security_posture_and_takes_secrets_from_key_vault():
+    docs = render_azure_demo()
+    assert not kinds(docs, "Ingress"), "the demo is fronted by the gateway, not by the retired ingress-nginx"
+    assert not kinds(docs, "StatefulSet"), "no in-cluster Postgres on Azure"
+    policies = {p["metadata"]["name"]: p for p in kinds(docs, "NetworkPolicy")}
+    assert {"default-deny", "ingress-to-apps"} <= set(policies)
+    ingress_from = policies["ingress-to-apps"]["spec"]["ingress"][0]["from"][0]["namespaceSelector"]["matchLabels"]
+    assert ingress_from == {"kubernetes.io/metadata.name": "gateway"}
+    copilot = next(d for d in kinds(docs, "Deployment") if d["metadata"]["name"] == "copilot")
+    c = copilot["spec"]["template"]["spec"]["containers"][0]
+    env = {e["name"]: e for e in c["env"]}
+    assert c["image"] == "x.azurecr.io/cf-ai:demo"
+    assert env["LLM_PROVIDER"]["value"] == "foundry" and env["COPILOT_DAILY_BUDGET_USD"]["value"] == "0.25"
+    for name in ("LLM_API_KEY", "LLM_BASE_URL", "COPILOT_DB_URL"):       # credentials and endpoints come from Secrets, never from chart values
+        assert "valueFrom" in env[name], name
+    assert next(d for d in kinds(docs, "PersistentVolumeClaim"))["spec"]["storageClassName"] == "managed-csi"
+    spc = kinds(docs, "SecretProviderClass")[0]["spec"]
+    assert "llm-base-url" in spc["parameters"]["objects"] and "ai-backend-key" in spc["parameters"]["objects"]
+    for d in kinds(docs, "Deployment"):
+        assert d["spec"]["template"]["spec"]["securityContext"]["runAsNonRoot"] is True, d["metadata"]["name"]
+
+
+def test_azure_gateway_is_restricted_to_one_address_and_runs_non_root():
+    docs = [d for d in yaml.safe_load_all((CHART.parents[1] / "azure-demo" / "azure-gateway.yaml").read_text()) if d]
+    svc = next(d for d in docs if d["kind"] == "Service")
+    assert svc["spec"]["type"] == "LoadBalancer" and svc["spec"]["loadBalancerSourceRanges"] == ["__SOURCE_RANGE__"]
+    dep = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+    assert dep["securityContext"]["runAsNonRoot"] is True and dep["automountServiceAccountToken"] is False
+    ns = next(d for d in docs if d["kind"] == "Namespace")
+    assert ns["metadata"]["labels"]["pod-security.kubernetes.io/enforce"] == "restricted"
+
+
+def test_single_node_disk_profile_recreates_pods_and_seeds_beside_them_and_helm_test_can_reach_the_apps():
+    docs = render_azure_demo()
+    mt = next(d for d in kinds(docs, "Deployment") if d["metadata"]["name"] == "meditrack")
+    assert mt["spec"]["strategy"] == {"type": "Recreate"}                     # an RWO disk cannot be attached by two pods at once
+    seed = next(d for d in kinds(docs, "Job") if d["metadata"]["name"].startswith("meditrack-seed"))
+    aff = seed["spec"]["template"]["spec"]["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+    assert aff["labelSelector"]["matchLabels"] == {"app.kubernetes.io/name": "meditrack"} and aff["topologyKey"] == "kubernetes.io/hostname"
+    policies = {p["metadata"]["name"]: p for p in kinds(docs, "NetworkPolicy")}
+    assert {"smoke-test-egress", "apps-accept-smoke-test"} <= set(policies)
+    test_pod = next(d for d in docs if d["kind"] == "Pod")
+    assert test_pod["metadata"]["labels"]["cityforward/role"] == "smoke-test"
+    # the RWX production profile keeps the default rolling update and no affinity
+    prod = render("values-aks.yaml")
+    assert "strategy" not in next(d for d in kinds(prod, "Deployment") if d["metadata"]["name"] == "meditrack")["spec"]
+
+
+def test_azure_gateway_serves_https_only_to_the_internet():
+    text = (CHART.parents[1] / "azure-demo" / "azure-gateway.yaml").read_text()
+    docs = [d for d in yaml.safe_load_all(text) if d]
+    svc = next(d for d in docs if d["kind"] == "Service")
+    assert [p["port"] for p in svc["spec"]["ports"]] == [443], "no plain-HTTP port is exposed"
+    assert "tls internal" in text and "default_sni __HOST__" in text

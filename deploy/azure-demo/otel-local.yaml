@@ -1,0 +1,12 @@
+fullnameOverride: otel-collector
+replicaCount: 1
+config:
+  exporters:
+    # Helm cannot delete a key the repo values file defines; keep it valid but unused (no Jaeger in the local profile).
+    otlphttp/jaeger: {endpoint: "http://localhost:4318"}
+    debug: {verbosity: detailed}
+  service:
+    pipelines:
+      traces:
+        exporters: [spanmetrics, debug]
+# All PHI-scrubbing processors are inherited unchanged from the repository values.

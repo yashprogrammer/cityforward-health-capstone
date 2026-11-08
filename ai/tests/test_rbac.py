@@ -150,3 +150,21 @@ def test_keycloak_rejections(keycloak):
     with pytest.raises(HTTPException) as e:
         ver.verify(mint({"iss": "https://evil.example/realms/x", "realm_access": {"roles": ["NURSE"]}}))
     assert e.value.status_code == 401                                                          # untrusted issuer
+
+
+def test_break_glass_works_for_a_patient_nobody_has_opened_yet(rt, clean_db, client, meditrack):
+    """Found on the Azure demo: the dashboard's access-denied screen offers break-glass, but a never-opened patient has no unit on record, so the request answered 'not indexed yet'."""
+    hale = pid_of(rt, HALE)                                                  # deliberately NOT indexed
+    runtime.gateway = Gateway(None)
+    nurse = bearer(user_token(meditrack, HALE, user="nurse.park")["access_token"])       # 3E-MED nurse, patient on 4W-CARD
+    assert client.post(f"/api/patients/{hale}/ask", headers=nurse, json={"question": "aspirin"}).status_code in (403, 409)
+    try:
+        g = client.post(f"/api/patients/{hale}/break-glass", headers=nurse, json={"reason": "Cross-cover for transferred patient with chest pain overnight"})
+        assert g.status_code == 201
+        assert client.post(f"/api/patients/{hale}/ask", headers=nurse, json={"question": "aspirin"}).status_code == 200
+        # a clinician who already has the unit is still told so
+        own = bearer(user_token(meditrack, HALE, user="attending.raman")["access_token"])
+        assert client.post(f"/api/patients/{hale}/break-glass", headers=own, json={"reason": "Cross-cover for transferred patient"}).status_code == 409
+    finally:
+        with db.system() as c:                                               # clean_db does not clear grants: do not leak this one into later tests
+            c.execute("DELETE FROM break_glass")

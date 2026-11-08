@@ -32,6 +32,10 @@ _AGE90 = re.compile(r"\b(9\d|1[0-4]\d)[- ]?(?:years?|yrs?|y\.?o\.?|y)(?:[- ]?old
 _CLINICIAN = re.compile(r"\bDr\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?|\b[A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+,\s+(?:RN|RRT|PT|OT|MD|DO|NP|PA-C)\b")
 
 
+_BARE_DAY = re.compile(r"(?:\bday\s+)?(?<![\w\[])D([+-]\d+)\b")
+_BARE_TAG = re.compile(r"(?<![\w\[])([A-Z]{2,}_[A-Z]?\d+)\b")
+
+
 class Restorer:
     def __init__(self):
         self.map: dict[str, str] = {}
@@ -43,7 +47,9 @@ class Restorer:
     def restore_text(self, s: str) -> str:
         for ph in sorted(self.map, key=len, reverse=True):
             s = s.replace(ph, self.map[ph])
-        return s
+        # models often drop the brackets ("day D+0", "on D-3"): put the real date back for those too, or the offset leaks into the answer
+        s = _BARE_DAY.sub(lambda m: self.map.get(f"[D{m.group(1)}]", m.group(0)), s)
+        return _BARE_TAG.sub(lambda m: self.map.get(f"[{m.group(1)}]", m.group(0)), s)      # CLINICIAN_1, DATE_4, ACCOUNT_X5
 
     def restore(self, obj):
         if isinstance(obj, str):
