@@ -547,6 +547,47 @@ sudo env PUBLIC_BASE_URL=https://$DEMO_DOMAIN docker compose --env-file ~/cityfo
 **Not tested:** signing in to legacy as a second Microsoft user, and watching a webhook event leave the
 recreated legacy container.
 
+### 12. Empty Diagnosis tab on current admissions (2026-11-08)
+
+**Symptom.** Opening a current admission in MediTrack (for example IP2610-0204, chronic heart
+failure) showed "No records found" on the Diagnosis tab.
+
+**Cause.** Not a bug in the screens. The loader (`load_bundles.py`) already attaches the working
+diagnosis and the problems still active on arrival to each current admission (commit `adce890`),
+and a freshly seeded database has them. The Azure database was seeded earlier from a package
+without that step, and the seed skips a populated database, so 7 of the 11 current admissions
+(and every non-curated inpatient admission in the database) had no diagnosis rows. The AI still
+listed the patient's diagnoses because it reads the whole chart, including the older visits that
+did carry them.
+
+**Fix, without reseeding** (the legacy database is shared, so a reseed is not an option):
+`python -m scripts.backfill_diagnoses` (`--apply` to write; the default is a dry run). It finds
+each current admission by patient (MRN), ward, status and admit time, not by account number, and
+adds exactly what the seed would add, but only to admissions that have no diagnosis rows at all, so
+it is safe to run twice and never changes an existing diagnosis. `--statuses` changes which
+admissions are repaired (default `ADM,DA`).
+
+```bash
+# inside the secured MediTrack container (the code is in the image from the next build; copy it in until then)
+sudo docker exec cityforward-integrated-meditrack-secured-1 python -m scripts.backfill_diagnoses
+sudo docker exec cityforward-integrated-meditrack-secured-1 python -m scripts.backfill_diagnoses --apply
+```
+
+**Test.** `customer/tests/test_backfill_diagnoses.py` deletes the diagnoses of the current
+admissions inside a transaction, runs the backfill, and requires the result to equal the fresh seed
+exactly (codes, descriptions, types and order), then checks that a dry run writes nothing, that a
+second run changes nothing, and rolls everything back.
+
+**On Azure.** The `ip_diag_dtl` table was backed up first (`~/cityforward-backups/ip_diag_dtl-before-backfill-*.sql`).
+The dry run listed 7 admissions to repair and 4 to leave alone; applying added 72 diagnoses
+(IP2610-0201: 12, -0202: 9, -0203: 7, -0204: 8, -0206: 19, -0207: 3, -0209: 14); the second run changed nothing.
+IP2610-0204 now shows I50.9 chronic congestive heart failure first, with her other recorded problems, all
+`PROV` because she is admitted (discharge-advised admissions get `FINAL`).
+
+**Effect on the AI.** Overview now reads "Provisional diagnoses to review (8)" for IP2610-0204 where it
+used to say no documentation gaps; the coding worksheet and its earlier finalized version still open.
+Other admissions will show the same new flags. Discharged admissions were not touched.
+
 Do not run the destructive legacy seed against the existing Azure database.
 
 ### Local test database incident
