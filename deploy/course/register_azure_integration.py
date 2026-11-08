@@ -21,9 +21,10 @@ with connect() as c:
     staff = row(c, 'SELECT USR_ID FROM USR_MST WHERE USR_ID=%s AND IS_ACTV=1', 'attending.raman')
     if not staff:
         raise RuntimeError('The assigned synthetic attending account is not active')
-    mapping = row(c, 'SELECT USER_ID, ACTIVE FROM staff_identity WHERE issuer=%s AND subject=%s', issuer, subject)
-    if mapping and (mapping['USER_ID'] != 'attending.raman' or not mapping['ACTIVE']):
-        raise RuntimeError('The Entra identity already has a different or inactive mapping')
+    # An identity can be linked to several accounts (staff dashboard); this script only guarantees the first one.
+    mapping = row(c, 'SELECT ACTIVE FROM staff_identity WHERE issuer=%s AND subject=%s AND user_id=%s', issuer, subject, 'attending.raman')
+    if mapping and not mapping['ACTIVE']:
+        raise RuntimeError('The Entra identity already has an inactive link to this account')
     if not mapping:
         c.execute('INSERT INTO staff_identity (issuer,subject,user_id) VALUES (%s,%s,%s)', (issuer, subject, 'attending.raman'))
 

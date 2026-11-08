@@ -411,6 +411,82 @@ then restart the services that depend on it. It is now set to `unless-stopped`
 (`sudo docker update --restart unless-stopped cityforward-course-db-1`), but any new
 deployment should set that in its compose file.
 
+### 10. Staff & Access administration (2026-11-08)
+
+**Problem.** Until now, who could sign in as whom was set by inserting rows with SQL or a setup
+script. That does not work in a hospital, where staff join, move wards and leave every week, and
+IT must be able to do it without a database client.
+
+**Model.** Microsoft Entra proves who someone is. MediTrack decides what they may do: a
+staff account (`usr_mst`: role, ward, practitioner record) and a *link* between a sign-in
+identity (the Entra object ID) and that account (`staff_identity`). An identity can now be
+linked to several accounts, for example a clinician who is also a department administrator.
+
+**What was built** (System Admin, Staff & Access, IT administrators only):
+
+| Screen | What an administrator can do |
+|---|---|
+| Staff accounts | Search and filter; create an account; edit name, role, ward and practitioner record; deactivate (ends that person's open sessions at once) and reactivate; link, disable, enable or remove sign-in links by Entra object ID |
+| Access requests | A valid Microsoft sign-in with no staff account is refused with a plain page and kept here (name, email, object ID, attempts). Pick the account and click Assign, or Dismiss. A dismissed person who tries again comes back as pending. The sidebar shows the count |
+| Open sessions | See who is signed in and sign them out |
+| Header "Switch account" | Anyone linked to more than one account switches without signing in again. The old session ends (so SMART tokens issued to it stop working) and the switch is audited. This replaces the legacy user dropdown while keeping Entra in charge of who may use which account |
+
+**Safeguards.** Only the IT_ADMIN role reaches these endpoints (each route is on the explicit
+allow-list in `staff_guard.py`; CSRF is required). An administrator cannot deactivate their own
+account, change their own role, or disable or remove the sign-in link they are using, and the last
+active administrator cannot be demoted or deactivated. A nurse cannot be saved without a ward and
+a hospital-wide role always saves as ward ALL. Every change is written to the audit trail
+(`STAFF_CREATED`, `STAFF_UPDATED`, `STAFF_DEACTIVATED`, `STAFF_REACTIVATED`, `IDENTITY_LINKED`,
+`IDENTITY_DISABLED`, `IDENTITY_ENABLED`, `IDENTITY_REMOVED`, `ACCESS_REQUEST_DISMISSED`,
+`SESSION_REVOKED`, `STAFF_ACCOUNT_SWITCH`).
+
+**Code.** `customer/meditrack/backend/staff_admin.py` (API), `staff_sessions.py` (multi-account
+sign-in, `switch_account`), `entra_login.py` (records unassigned sign-ins), `local_login.py`
+(`/auth/session` lists linked accounts, `/auth/switch`), `auth_schema.sql` (idempotent migration
+that widens the `staff_identity` key to `(issuer, subject, user_id)`; it ran against the live
+database and kept the existing link), and the UI in `customer/meditrack/ui/src/StaffAccess.jsx`.
+
+**Bootstrap the first administrator.** The dashboard needs an administrator to exist. Link your
+Entra object ID to `it.admin` once, in SQL; everything after that is done in the dashboard:
+
+```sql
+INSERT INTO staff_identity (issuer, subject, user_id, linked_by)
+VALUES ('https://login.microsoftonline.com/<tenant id>/v2.0', '<your Entra object ID>', 'it.admin', 'bootstrap');
+```
+
+**Adding a real person.** In the Entra admin center create or invite the user. Either copy their
+Object ID and use "+ Link sign-in" on their staff account, or ask them to sign in once, then
+assign them from Access requests.
+
+**Verification.**
+- Automated: 6 new tests (`customer/tests/test_staff_admin.py`, local mode) cover authorization,
+  create/edit/deactivate, the self-lockout rules, links, access requests, sessions and account
+  switching, plus 1 new Entra-mode test that an unassigned sign-in gets a 403 page and a pending
+  request. Results: 47 passed in demo mode, 7 in local mode, 2 in Entra mode. (The Entra SMART
+  test needs `SMART_APP_REDIRECT_URIS` set to the test host at seed time.)
+- On Azure as the IT administrator, through the screen: Switch account from Dr. Raman to Sam
+  Whitlock, Staff & Access list, create an account (an invalid ID showed its error inside the
+  form), link with a bad then a good object ID, disable, enable, remove, edit (role to HIM coder
+  set the ward to ALL), deactivate with confirmation and reactivate, the refusal to deactivate
+  your own account, assign an access request, and the audit trail entries for all of it.
+
+**Not done or not verified.**
+- A real second Microsoft user was not used: the pending request on Azure was inserted into the
+  database to show the screen and then assigned through the UI. The sign-in path that creates a
+  request is covered by the Entra-mode test, not by a live second account.
+- Signing out another person from Open sessions is covered by tests, not clicked on Azure
+  (there was no second session).
+- Switching accounts needs no second authentication. A hospital may want to require one for
+  administrator accounts.
+- No automatic provisioning: accounts are still created by an administrator. Driving roles from
+  Entra groups or app roles, and SCIM, are the next step. The Entra app registration was not
+  changed, so any user in the tenant can reach the "not assigned" page.
+- The legacy system was not changed and still has its user dropdown.
+- State left on the demo: the test account (`nurse.demo`), its link and the simulated request
+  were removed afterwards. Your identity is linked to both `attending.raman` and `it.admin`
+  (the bootstrap link above). After switching back to Dr. Raman, the AI dashboard still opens
+  for a patient on her unit.
+
 Do not run the destructive legacy seed against the existing Azure database.
 
 ### Local test database incident

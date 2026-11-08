@@ -36,7 +36,7 @@ def secured_client(seeded, monkeypatch):
     monkeypatch.setattr(entra_login, '_keys', lambda tenant: SimpleNamespace(get_signing_key_from_jwt=lambda token: SimpleNamespace(key=key.public_key())))
     staff_sessions.migrate()
     with connect() as c:
-        c.execute('INSERT INTO staff_identity (issuer, subject, user_id) VALUES (%s,%s,%s) ON CONFLICT (issuer,subject) DO UPDATE SET active=true',
+        c.execute('INSERT INTO staff_identity (issuer, subject, user_id) VALUES (%s,%s,%s) ON CONFLICT (issuer,subject,user_id) DO UPDATE SET active=true',
                   (issuer, 'test-entra-user', 'attending.raman'))
     with TestClient(app, base_url='https://ehr.example', follow_redirects=False) as client:
         yield client
@@ -72,3 +72,20 @@ def test_entra_session_binds_smart_access_and_logout(secured_client):
     assert client.get('/fhir/Patient/' + patient, headers={'Authorization': 'Bearer ' + token}).status_code == 200
     assert client.post('/auth/logout', headers={'X-CSRF-Token': client.cookies['mt_csrf']}).status_code == 200
     assert client.get('/fhir/Patient/' + patient, headers={'Authorization': 'Bearer ' + token}).status_code == 401
+
+
+def test_an_unassigned_microsoft_sign_in_is_refused_and_recorded_for_an_administrator(secured_client):
+    client = secured_client
+    with connect() as c:
+        c.execute("UPDATE staff_identity SET active=false WHERE subject='test-entra-user'")
+        c.execute("DELETE FROM staff_access_request WHERE subject='test-entra-user'")
+        c.execute('DELETE FROM staff_oidc_flow')
+    assert client.get('/auth/entra/start').status_code == 302
+    with connect() as c:
+        flow = c.execute('SELECT payload FROM staff_oidc_flow').fetchone()['PAYLOAD']
+    denied = client.get('/auth/entra/callback', params={'state': flow['state'], 'code': 'valid'})
+    assert denied.status_code == 403 and 'not assigned to a MediTrack staff account' in denied.text
+    assert 'mt_session' not in client.cookies
+    with connect() as c:
+        request = c.execute("SELECT status, attempts FROM staff_access_request WHERE subject='test-entra-user'").fetchone()
+    assert (request['STATUS'], request['ATTEMPTS']) == ('PENDING', 1)
