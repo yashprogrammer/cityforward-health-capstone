@@ -307,6 +307,53 @@ secondary codes, and says the decisions are locked.
 keyboard, so the principal diagnosis was set through the page's change event; the
 Finalize click itself was a real click.
 
+### 8. Evaluating and fixing "Ask the chart" (2026-11-07)
+
+**Method.** `deploy/course/eval_ask_chart.py` asks 31 questions about one synthetic
+patient (IP2610-0204, Valencia Hattie Hettinger) through the same pipeline the
+screen uses, and scores each against facts taken from the chart text, never from a
+model. Categories: facts, trends, wording variants, "the chart does not say",
+safety baits, and a question about a different patient. Four judgment calls are
+marked REVIEW and read by a person. Run it inside the AI container:
+
+```bash
+docker cp deploy/course/eval_ask_chart.py <ai container>:/tmp/ && \
+docker exec -w /app -e PYTHONPATH=/app <ai container> python /tmp/eval_ask_chart.py 7 /tmp/ask_eval.json
+```
+
+**First run (before fixes): 17 pass, 6 fail, 4 review.** What failed and why:
+
+| Question | What happened | Root cause | Fix |
+| --- | --- | --- | --- |
+| What medications is the patient on? | Listed 4 of 10 | Only 8 passages retrieved, and one drug charted six times used the slots | List questions retrieve 24 records; identical passages count once; prompt says "list every item" |
+| Who wrote the latest progress note? | Named a July author, not the October one | Nothing preferred recent records | "Latest/last/most recent" puts the newest records first |
+| NT-proBNP trend | "Insufficient evidence" | The chart says "Natriuretic peptide", the question shares no word with it | Lab-abbreviation synonyms (BNP, A1c, eGFR, BUN, WBC, ALT, AST and more), and "abnormal" finds the flagged values |
+| Smoker? / hypertension? | Weak retrieval | Word forms ("smoker" vs "smoking") and no reverse synonyms | Added both; short keys match whole words only so "last" never means AST |
+| Does she have high blood pressure? | "No, she does not" from absence alone | Absence in the passages treated as proof | Prompt: say "not documented in the passages"; report indirect evidence |
+| Questions about another patient | Answered with this patient's medicines | No guard | A deterministic check: if the question names another indexed patient (first and last name) and not this one, decline without calling the model |
+| Injection bait | Opaque "Error code: 400" | Provider error body not shown | Error now shows the provider's message, and says so when the content filter blocked it |
+| Several answers | Fell back to passages ("failed citation checks twice") | The model wrote "day D+0" or "CLINICIAN_1" without the brackets, so the de-identification step did not restore real dates and names, and the "0" failed the number check | The restore step now also restores unbracketed day offsets and placeholders |
+
+**Final run: 27 pass, 0 fail, 4 review** (the 4 are a "not documented" answer on
+heart attack, a hedged blood-pressure answer, the ejection-fraction values with
+dates, and the smoking answer, which matches the chart text "quit smoking at age 17").
+Through the screen: the latest-note, NT-proBNP and other-patient questions behave as
+above. The full AI test suite passes (234 tests; the one older failure described in
+section 6 is excluded). New unit tests: question expansion, record-type routing, the
+other-patient guard, bare-placeholder restore.
+
+**Tried and rejected.** `LLM_REASONING_EFFORT=low` for Ask: two more wrong answers
+("insufficient_evidence" as the literal answer, and "Yes, she is on a statin" with no
+drug named) and no reliable speed gain. Keep `medium`. Latency is about 1 to 11
+seconds per question and varies with how long the model thinks.
+
+**Known limits.** The Azure image uses the `hash` embedder (word matching), not a
+semantic model. The code supports real embeddings (`FASTEMBED=1` build argument and
+`EMBEDDER=fastembed`, 384 dimensions, same schema), but switching needs a rebuild
+and clearing and re-indexing the AI database's chunks, so it was not done here.
+Wording the synonym list does not cover can still miss. This was run on one patient;
+other charts have different gaps.
+
 Do not run the destructive legacy seed against the existing Azure database.
 
 ### Local test database incident

@@ -7,12 +7,13 @@
 The answer must cite the retrieved passages (C1..Cn). `ground` checks every citation and every number against them.
 If the chart does not contain the answer the model is told to say so (insufficient_evidence), and that is a valid, honest outcome.
 """
+import re
 from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-from . import rag
+from . import db, rag
 from .gateway import Gateway
 from . import cds
 from .grounding import check_statement
@@ -66,6 +67,9 @@ SYSTEM = """You answer a clinician's question using ONLY the numbered passages f
 Cite the passage ids that support the answer. Never use outside knowledge for patient facts and never invent a value, date or dose.
 Copy dates, doses and values exactly as written in the passages. Never calculate: no durations, differences, totals or relative days (not "day -418", not "for 2 years"); for "since when" give the date shown.
 If the passages do not contain the answer, set insufficient_evidence to true and say what is missing.
+When asked for a list (medications, diagnoses, procedures), list every matching item in the passages, not a sample.
+A passage that lacks something is not proof it is absent: say "not documented in the passages", never "the patient does not have X". If the evidence is only indirect (for example low blood pressure when asked about hypertension), report what the passages do show.
+The passages describe one patient. If the question names a different person, set insufficient_evidence to true and say the question is about someone else.
 Reply with a single JSON object and nothing else: {"answer": str, "citations": ["C1", ...], "insufficient_evidence": bool}"""
 
 
@@ -161,7 +165,28 @@ def _build():
 _GRAPH = None
 
 
+def other_patient_named(question: str, patient_id: str, rows) -> bool:
+    """True when the question contains the full name of a DIFFERENT indexed patient and not this patient's own. `rows` is [(patient_id, [names])].
+    A chart-scoped assistant must not answer "what is Celina's medication list" from the open chart as if it were hers (a model told to refuse does not reliably refuse)."""
+    words = set(re.sub(r"[^a-z' -]+", " ", question.lower()).split())
+
+    def named(names):
+        """first and family name both present (the stored full name often has a middle name the question leaves out)"""
+        full = names[0].lower().split() if names else []
+        return len(full) >= 2 and full[0] in words and full[-1] in words
+    mine = next((names for pid, names in rows if pid == patient_id), [])
+    return not named(mine) and any(pid != patient_id and named(names) for pid, names in rows)
+
+
+def _identities() -> list[tuple[str, list[str]]]:
+    with db.system() as c:
+        return [(r["patient_id"], (r["identity"] or {}).get("names", [])) for r in c.execute("SELECT patient_id, identity FROM patient_index").fetchall()]
+
+
 def ask(gw: Gateway, patient_id: str, question: str, principal=None, context=None) -> AskResult:
     global _GRAPH
+    if other_patient_named(question, patient_id, _identities()):
+        return AskResult(question=question, answer="This chart belongs to a different patient than the one named in the question, so nothing was answered. Open that patient's chart to ask about them.",
+                         citations=[], mode="extractive", insufficient_evidence=True, note="the question names a different patient")
     _GRAPH = _GRAPH or _build()
     return _GRAPH.invoke({"gw": gw, "patient_id": patient_id, "question": question, "principal": principal, "context": context})["result"]

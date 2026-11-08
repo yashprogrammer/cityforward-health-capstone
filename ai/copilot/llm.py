@@ -87,7 +87,12 @@ class OpenAICompatible:
         try:
             r = self._chat.invoke([("system", system), ("user", user)])
         except Exception as e:   # noqa: BLE001 - network, auth, rate limit: the caller decides what to do
-            raise LLMError(f"{type(e).__name__}: {e}") from e
+            body = getattr(e, "body", None)
+            code = str(body.get("code", "")) if isinstance(body, dict) else ""
+            if "content_filter" in code or "ResponsibleAIPolicyViolation" in str(e):
+                raise LLMError("the model provider's content filter blocked this request") from e
+            detail = (body.get("message") if isinstance(body, dict) else None) or e
+            raise LLMError(f"{type(e).__name__}: {detail}") from e
         u = getattr(r, "usage_metadata", None) or {}
         if (getattr(r, "response_metadata", None) or {}).get("finish_reason") == "length" and not str(r.content).strip():
             # a reasoning model spends the same token budget on thinking and on the answer: a cap that is too low leaves no answer at all

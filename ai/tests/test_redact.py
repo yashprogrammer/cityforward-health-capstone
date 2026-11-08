@@ -85,3 +85,15 @@ def test_redaction_is_invisible_to_the_clinician_end_to_end(rt, payer, clean_db,
 def test_system_prompt_explains_the_placeholders():
     out, rs, n = Redactor().apply_all(["SYSTEM", "Robert Hale"], context=type("C", (), {"identity": IDENT})())
     assert "[PATIENT]" in out[1] and "placeholders" in out[0]
+
+
+def test_restorer_also_restores_date_placeholders_the_model_wrote_without_brackets():
+    from copilot.redact import Restorer
+    r = Restorer()
+    r.put("[D+0]", "2026-10-19")
+    r.put("[D-3]", "2026-10-16")
+    assert r.restore_text("dated [D+0]") == "dated 2026-10-19"
+    assert r.restore_text("written on day D+0 and again D-3") == "written on 2026-10-19 and again 2026-10-16"
+    r.put("[CLINICIAN_1]", "Dr. Priya Raman")
+    assert r.restore_text("written by CLINICIAN_1 and [CLINICIAN_1]") == "written by Dr. Priya Raman and Dr. Priya Raman"
+    assert r.restore_text("D+9 is unknown and ID+0 is not a date") == "D+9 is unknown and ID+0 is not a date"
