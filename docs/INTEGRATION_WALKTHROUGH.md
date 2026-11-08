@@ -491,11 +491,61 @@ assign them from Access requests.
 - No automatic provisioning: accounts are still created by an administrator. Driving roles from
   Entra groups or app roles, and SCIM, are the next step. The Entra app registration was not
   changed, so any user in the tenant can reach the "not assigned" page.
-- The legacy system was not changed and still has its user dropdown.
+- Legacy: at the time of section 10 it still had its user dropdown. Section 11 replaces it with Microsoft sign-in.
 - State left on the demo: the test account (`nurse.demo`), its link and the simulated request
   were removed afterwards. Your identity is linked to both `attending.raman` and `it.admin`
   (the bootstrap link above). After switching back to Dr. Raman, the AI dashboard still opens
   for a patient on her unit.
+
+### 11. Legacy signs in with Microsoft too (2026-11-08)
+
+**Why.** The legacy app still had the user-switch box in the top bar, so anyone could become any
+staff member. You asked for legacy to respect the same identity provider, so the move from legacy to
+integrated carries the same people and accounts.
+
+**What changed**
+- **Entra app registration:** one redirect was added, `https://<domain>/auth/entra/callback`, next to
+  the existing `:8443` one. Nothing else in the registration changed.
+- **Legacy MediTrack container:** recreated from `deploy/course/legacy-entra.override.yml`, layered on the
+  legacy stack's own compose files. The image is the current MediTrack build (the one the integrated copy
+  runs) and the app starts in Microsoft sign-in mode. The database, document and hot-folder volumes, the
+  gateway and the webhook sender are unchanged (the sender stays on by default; I confirmed that in the code,
+  not by watching an event).
+- Apply it from `~/cityforward` on the VM:
+
+```bash
+sudo env PUBLIC_BASE_URL=https://$DEMO_DOMAIN docker compose --env-file ~/cityforward-integrated/runtime.conf \
+  -p cityforward-course -f docker-compose.yml -f poc/deploy/compose.yaml -f legacy-entra.override.yml up -d --no-deps meditrack
+```
+
+- **Roll back** by running the same command without `-f legacy-entra.override.yml`; that brings back the
+  old image and the no-login behavior.
+- The VM cannot reach its own public address, so run any `curl` checks from your own machine.
+
+**What it means**
+- Legacy staff screens now need a session (no session gives 401), and sign-in goes to Microsoft.
+- Staff links live in the shared database, so the same links work on both apps, including **Switch account**
+  and the **Staff & Access** screen.
+- **Shared sign-in across the two addresses.** Browsers send cookies regardless of port, and both apps read
+  sessions from the same database, so signing in or switching on one address carries to the other. Logging
+  out on one logs out both. I checked this: the same session cookie and the same staff user appeared on both.
+- Legacy has no AI tab, because the AI launch link is only configured on the integrated app.
+- **For the course:** the free user dropdown is gone from legacy. If you want it back as the "before"
+  picture, use the rollback.
+
+**Checked on Azure**
+- The legacy address shows the Microsoft sign-in page; `/int/census` returns 401 without a session; sign-in
+  works and lands as the account used last; the patient file opens for Dr. Raman with the legacy tabs.
+- The POC still loads its patient list and chart facts through legacy's FHIR interface (it uses its own
+  client key, not a staff session). The integrated app still answers.
+- **POC summary:** the POC's AI summary fell back to its template in two runs: once with a model-call error in
+  the browser, and once in a scripted run because its grounding check rejected a number the model wrote as
+  "14,250" with a special narrow space character. A plain model call works. Both are inside the POC's own
+  summarizer, not the legacy change, and I did not investigate further. The POC has none of the token and
+  reasoning-effort settings the integrated AI service needed.
+
+**Not tested:** signing in to legacy as a second Microsoft user, and watching a webhook event leave the
+recreated legacy container.
 
 Do not run the destructive legacy seed against the existing Azure database.
 
